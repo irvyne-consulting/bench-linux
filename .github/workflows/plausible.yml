@@ -1,0 +1,131 @@
+# ICR benchmark — plausible (Elixir): plausible/analytics' own "Build and test" job from `elixir.yml`, one cell (MIX_ENV=test,
+# postgres:18) with its PostgreSQL 18 and ClickHouse 25.11 service containers (upstream's tags pinned by digest), Erlang/OTP
+# 28.5.0.5 + Elixir 1.20.4 from .tool-versions through erlef/setup-beam, the tracker build, `mix deps.get`, `mix compile
+# --warnings-as-errors`, migrations, `make minio`, then the cell's six `--partitions` shards as one `mix test`. Upstream runs it
+# on Blacksmith with deps/_build caches; here a clean checkout of the pinned commit, no cache. `minio/minio` left Docker Hub:
+# the same release is pulled from quay.io by digest and tagged for `make minio`. Only Irvyne starts a run. Evidence uploaded.
+name: plausible
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: plausible/analytics
+  UPSTREAM_REF: 16120d0a92f69ad129e632afc2d172ad7f1eadc9   # master, 2026-09-17
+  # upstream's workflow-level env (PERSISTENT_CACHE_DIR is read by config/runtime.exs)
+  CACHE_VERSION: v19
+  PERSISTENT_CACHE_DIR: cached
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:18@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.11.5.8-alpine@sha256:80ab46b3af7ba13816afc43aa9d0fc28aece1343dfed53ae33524be1defd9051
+        ports:
+          - 8123:8123
+        env:
+          CLICKHOUSE_SKIP_USER_SETUP: 1
+        options: >-
+          --health-cmd "wget -q --spider http://127.0.0.1:8123/ping"
+          --health-start-period 2m
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    env:
+      MIX_ENV: test
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: plausible/analytics
+          ref: 16120d0a92f69ad129e632afc2d172ad7f1eadc9
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") docker=$(docker --version) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "elixir on the image: $(elixir --version 2>/dev/null | tail -1 || echo none) — node: $(node --version 2>/dev/null || echo none) — npm: $(npm --version 2>/dev/null || echo none) — .tool-versions: $(tr '\n' ' ' < .tool-versions)"
+      # upstream reads .tool-versions with marocchino/tool-versions-action; a shell step does the same. erlef/setup-beam needs
+      # ImageOS on self-hosted runners (GitHub's images define it): derived from /etc/os-release when absent
+      - name: Toolchain versions from .tool-versions
+        id: versions
+        run: |
+          echo "erlang=$(awk '$1=="erlang" {print $2}' .tool-versions)" >> "$GITHUB_OUTPUT"
+          echo "elixir=$(awk '$1=="elixir" {print $2}' .tool-versions)" >> "$GITHUB_OUTPUT"
+          if [ -z "${ImageOS:-}" ]; then . /etc/os-release; echo "ImageOS=ubuntu${VERSION_ID%%.*}" >> "$GITHUB_ENV"; fi
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ steps.versions.outputs.elixir }}
+          otp-version: ${{ steps.versions.outputs.erlang }}
+      # upstream skips these two steps when its cache already holds a built tracker; a cold cache runs them
+      - run: npm install --prefix ./tracker
+      - run: npm run deploy --prefix ./tracker
+      - run: mix deps.get --only $MIX_ENV
+      - run: mix compile --warnings-as-errors --all-warnings
+      - run: mix do ecto.create, ecto.migrate
+      - run: mix run -e "Tzdata.ReleaseUpdater.poll_for_update"
+      # `make minio` runs `docker run ... minio/minio server ...`: that repository is no longer on Docker Hub (404 on
+      # 2026-09-19), so the release quay.io's `latest` tag points to is pulled by digest and tagged for the Makefile
+      - name: make minio
+        run: |
+          docker pull quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e   # RELEASE.2025-09-07T16-13-09Z, what quay.io/minio/minio:latest points to
+          docker tag "$(docker image inspect --format '{{.Id}}' quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e)" minio/minio:latest
+          make minio
+      # upstream: `--partitions 6` with MIX_TEST_PARTITION 1..6 across six jobs; here the whole cell in one run.
+      # MINIO_HOST_FOR_CLICKHOUSE is upstream's 172.17.0.1 — the Docker default-bridge gateway, read from the daemon
+      - name: mix test
+        shell: bash
+        run: |
+          MINIO_HOST_FOR_CLICKHOUSE=$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)
+          export MINIO_HOST_FOR_CLICKHOUSE="${MINIO_HOST_FOR_CLICKHOUSE:-172.17.0.1}"
+          echo "MINIO_HOST_FOR_CLICKHOUSE=$MINIO_HOST_FOR_CLICKHOUSE"
+          mix test --include slow --include minio --include migrations --max-failures 1 --warnings-as-errors 2>&1 | tee "$RUNNER_TEMP/mix-test.log"
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/mix-test.log" "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          { elixir --version; erl -noshell -eval 'io:format("~s~n",[erlang:system_info(otp_release)]), halt().'; node --version; npm --version; } > "$RUNNER_TEMP/evidence/toolchain.txt" 2>&1 || true
+          cp mix.lock .tool-versions "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' > "$RUNNER_TEMP/evidence/images.txt" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-plausible-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

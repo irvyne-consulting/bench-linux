@@ -38,6 +38,10 @@ every leg builds inside the same toolchain image pinned by digest.
 | `uv.yml` | astral-sh/uv `220b3ee` | upstream's `cargo test on linux` job in full: mold, Rust 1.98.1, uv 0.12.13 (SHA-256 pinned), nine test Pythons, then `cargo nextest run` with upstream's profile, build and tests read apart — large Rust workspace |
 | `nushell.yml` | nushell/nushell `de33b54` | upstream's `cargo` job, root workspace on Ubuntu: fmt check, clippy, build, tests, doc tests with upstream's ci profile, Rust 1.96.1 — Rust application |
 | `duckdb.yml` | duckdb/duckdb `3a604ab` (v2.0-cyanoptera) | upstream's `linux-release` job (amd64 compatibility cell) inside upstream's manylinux CI image pinned by digest: `make release` with the release extensions and jemalloc, smoke tests, symbol and library checks; vcpkg bootstrapped, no ccache — C++, toolchain identical on every leg by construction |
+| `pydantic.yml` | pydantic/pydantic `915896d` | upstream's `test` job, CPython 3.14 cell: `uv sync` (builds pydantic-core with maturin), `make test` — Python + Rust extension |
+| `plausible.yml` | plausible/analytics `16120d0` | upstream's `Build and test` job: Erlang 28.5 / Elixir 1.20 (setup-beam), tracker build, `mix compile --warnings-as-errors`, migrations, MinIO, the six test partitions as one `mix test` — Elixir with PostgreSQL 18 and ClickHouse services |
+| `mastodon.yml` | mastodon/mastodon `3cdcf93` | upstream's `build` and `test` jobs folded into one: Ruby 4.0.7 (setup-ruby), `bundle install`, Node 24 + yarn, `assets:precompile`, `db:setup`, `flatware rspec` — Rails with PostgreSQL 14 and Redis 7 services, the heaviest services case |
+| `gitea.yml` | go-gitea/gitea `cdf786c` | upstream's `test-unit` job in full: Go 1.27, `make deps-backend`, `generate-go`, `test-backend` twice (race, gogit), `test-check` — Go with Elasticsearch, Meilisearch, Redis, MinIO and Azurite services |
 
 ## Results
 Pilots of 2026-09-19 (one or two attempts each, quiet node — the campaigns with more attempts follow):

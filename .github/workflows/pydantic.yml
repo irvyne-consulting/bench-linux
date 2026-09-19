@@ -1,0 +1,94 @@
+# ICR benchmark — pydantic (Python): pydantic/pydantic's own `test` job from `ci.yml`, one matrix cell (ubuntu, CPython 3.14 —
+# the newest stable version it tests; 3.15 is a pre-release until October) — `uv sync --all-packages --group testing-extra
+# --all-extras`, which also builds the pydantic-core Rust extension from the workspace with maturin, then `make test
+# NUM_THREADS=1` — from a clean checkout of the pinned upstream commit, on GitHub-hosted and ICR runners. Two edits: setup-uv's
+# cache is off and uv is pinned to 0.12.17 (upstream floats to the latest release); `PYTEST_ADDOPTS` adds a JUnit report.
+# Only Irvyne starts a run. Evidence (JUnit, coverage data, resolved environment, uv/python/rustc versions) uploaded per job.
+name: pydantic
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: pydantic/pydantic
+  UPSTREAM_REF: 915896d163835a57fd7987180087409a3229bd71   # main, 2026-09-18
+  # upstream's workflow-level env
+  COLUMNS: 150
+  UV_FROZEN: true
+  FORCE_COLOR: 1
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    env:
+      # upstream's `test` job env for the ubuntu-latest / 3.14 cell
+      OS: ubuntu-latest
+      DEPS: yes
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: pydantic/pydantic
+          ref: 915896d163835a57fd7987180087409a3229bd71
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") docker=$(docker --version) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "python3 on the image: $(python3 --version 2>&1) — $(rustc --version 2>&1) — $(cargo --version 2>&1)"
+      # upstream's step (astral-sh/setup-uv pinned by commit upstream, v10) with python-version 3.14; enable-cache false instead
+      # of true, and the uv release pinned — the latest on 2026-09-19, which upstream's `required-version >= 0.8.4` resolves to
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.12.17"
+          python-version: '3.14'
+          enable-cache: false
+      - name: Install dependencies
+        run: uv sync --all-packages --group testing-extra --all-extras
+      - run: 'uv run python -c "import pydantic.version; print(pydantic.version.version_info())"'
+      - run: mkdir coverage
+      # upstream: make test NUM_THREADS=1 == uv run coverage run -m pytest --durations=10 --parallel-threads 1
+      - name: Run pytest
+        run: make test NUM_THREADS=1
+        env:
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py3.14
+          CONTEXT: ${{ runner.os }}-py3.14-without-deps
+          PYTEST_ADDOPTS: --junitxml=${{ runner.temp }}/junit.xml
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/junit.xml" "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          for f in coverage/.coverage.*; do [ -f "$f" ] && cp "$f" "$RUNNER_TEMP/evidence/${f##*/.}"; done || true
+          { uv --version; uv run --no-sync python -VV; rustc --version; cargo --version; } > "$RUNNER_TEMP/evidence/toolchain.txt" 2>&1 || true
+          uv pip list --format freeze > "$RUNNER_TEMP/evidence/pip-freeze.txt" 2>&1 || true
+          cp uv.lock "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-pydantic-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

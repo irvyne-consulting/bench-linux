@@ -1,0 +1,158 @@
+# ICR benchmark — mastodon (Ruby on Rails): mastodon/mastodon's `build` and `test` jobs from `test-ruby.yml` folded into one
+# job, one matrix cell (Ruby 4.0.7 from .ruby-version, the cell that also measures coverage): apt libraries, Ruby through
+# ruby/setup-ruby, Node 24 + corepack/yarn, `bundle install`, `bin/rails assets:precompile` (production), then `bin/rails
+# db:setup`, `bin/flatware fan bin/rails db:test:prepare` and `bin/flatware rspec` against PostgreSQL 14 and Redis 7 service
+# containers (upstream's tags pinned by digest), from a clean checkout of the pinned upstream commit. Upstream's caches
+# (bundler, yarn, assets, RSpec persistence) are off and the artifact hand-off between its two jobs disappears. Only Irvyne starts a run.
+name: mastodon
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: mastodon/mastodon
+  UPSTREAM_REF: 3cdcf93dd30e7f1f221b6ac2dd107e8d35146c44   # main, 2026-09-19
+  # upstream's workflow-level env
+  BUNDLE_CLEAN: true
+  BUNDLE_FROZEN: true
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:14-alpine@sha256:1a916758fce623be724e9371461f13e0d48627b434989bd1873d96343d017f94
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10ms
+          --health-timeout 3s
+          --health-retries 50
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10ms
+          --health-timeout 3s
+          --health-retries 50
+        ports:
+          - 6379:6379
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    env:
+      # upstream's `test` job env for the .ruby-version cell (GITHUB_RSPEC, a pull-request-only formatter, is not set)
+      DB_HOST: localhost
+      DB_USER: postgres
+      DB_PASS: postgres
+      COVERAGE: true
+      RAILS_ENV: test
+      ALLOW_NOPAM: true
+      PAM_ENABLED: true
+      PAM_DEFAULT_SERVICE: pam_test
+      PAM_CONTROLLED_SERVICE: pam_test_controlled
+      OIDC_ENABLED: true
+      OIDC_SCOPE: read
+      SAML_ENABLED: true
+      CAS_ENABLED: true
+      BUNDLE_WITH: 'pam_authentication test'
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: mastodon/mastodon
+          ref: 3cdcf93dd30e7f1f221b6ac2dd107e8d35146c44
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") docker=$(docker --version) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "ruby on the image: $(ruby --version 2>/dev/null || echo none) — node: $(node --version 2>/dev/null || echo none) — .ruby-version: $(cat .ruby-version) — .nvmrc: $(cat .nvmrc)"
+      # upstream's setup-ruby action, inlined: its apt list plus ffmpeg and libpam-dev (the `test` job's additional
+      # dependencies) and the two runtime libraries ruby/setup-ruby requires (present on GitHub's images); the Azure mirror
+      # rewrite only where GitHub's mirror file exists
+      - name: Install system dependencies
+        run: |
+          if [ -f /etc/apt/apt-mirrors.txt ]; then sudo sed -i s:azure\.archive\.ubuntu\.com:archive.ubuntu.com:g /etc/apt/apt-mirrors.txt; fi
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libicu-dev \
+            libidn11-dev \
+            libvips42 \
+            libheif-plugin-aomdec \
+            libheif-plugin-libde265 \
+            ffmpeg libpam-dev \
+            libyaml-0-2 libgmp10
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+      # what ruby/setup-ruby's `bundler-cache: true` runs, without the cache
+      - name: bundle install
+        run: |
+          bundle config --local path "$PWD/vendor/bundle"
+          bundle config --local deployment true
+          bundle install --jobs "$(( $(nproc) < 8 ? $(nproc) : 8 ))"
+      # upstream's setup-javascript action (onlyProduction), inlined without the yarn cache
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Enable corepack
+        run: npm i -g corepack
+      - name: Install all production yarn packages
+        run: yarn workspaces focus --production
+      # upstream's `build` job step, with that job's env
+      - name: Precompile assets
+        run: |-
+          bin/rails assets:precompile
+        env:
+          RAILS_ENV: production
+          BUNDLE_WITH: production
+          SECRET_KEY_BASE_DUMMY: 1
+      # upstream's `test` job from here on; the RSpec output is also written to a file for the evidence
+      - name: Load database schema
+        run: |
+          bin/rails db:setup
+          bin/flatware fan bin/rails db:test:prepare
+      - name: bin/flatware rspec
+        shell: bash
+        run: bin/flatware rspec 2>&1 | tee "$RUNNER_TEMP/flatware-rspec.log"
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/flatware-rspec.log" "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          cp tmp/rspec/examples.txt "$RUNNER_TEMP/evidence/rspec-examples.txt" 2>/dev/null || true
+          cp coverage/lcov/*.lcov "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          { ruby --version; bundle --version; node --version; yarn --version; } > "$RUNNER_TEMP/evidence/toolchain.txt" 2>&1 || true
+          bundle list > "$RUNNER_TEMP/evidence/bundle-list.txt" 2>&1 || true
+          docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' > "$RUNNER_TEMP/evidence/images.txt" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-mastodon-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90
