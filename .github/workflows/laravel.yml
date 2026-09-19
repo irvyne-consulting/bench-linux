@@ -1,0 +1,105 @@
+# ICR benchmark — laravel (PHP): laravel/framework's own Linux test job, one matrix cell (PHP 8.4, PHPUnit 12.5.8,
+# prefer-stable) with its MySQL, Redis, Memcached and DynamoDB service containers (upstream's tags pinned by digest), from
+# a clean checkout of the pinned upstream commit, on GitHub-hosted and ICR runners. Two edits to upstream's job:
+# `--fail-on-deprecation` dropped (a dependency deprecation released after the pin must not abort a measurement) and the
+# imagick extension disabled on every leg (its AVIF test errors on Ubuntu 26.04's ImageMagick; both sides then skip the
+# same 32 tests). Only Irvyne starts a run. Evidence (JUnit, resolved dependencies, PHP, image digests) uploaded per job.
+name: laravel
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: laravel/framework
+  UPSTREAM_REF: 1d9727160ad440d1ccf2fdcbb7e4f4f36efae212   # 13.x, 2026-09-19
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 90
+    services:
+      memcached:
+        image: memcached:1.6-alpine@sha256:9e4de012dc607573052061c0bcb38abc775e1dd59b24e7ac38d1892842094aaf
+        ports:
+          - 11211:11211
+      mysql:
+        image: mysql:9.7@sha256:29abb0a179982e4a8928138bfc7f918af9eda64e7eeb1b1d084c1720a20159e6
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: forge
+        ports:
+          - 3306
+        options: --health-cmd="mysqladmin ping" --health-start-period=30s --health-interval=10s --health-timeout=5s --health-retries=3
+      redis:
+        image: redis:7.0@sha256:352c1fdadc91926edda08f45aeb3f27f37194c2f14101229c0523a11195c96e3
+        ports:
+          - 6379:6379
+        options: --entrypoint redis-server
+      dynamodb:
+        image: amazon/dynamodb-local:2.0.0@sha256:c8702bde709520b90930c20ee430d4123cd731da8e544cc4ccae0e2a78ee4fce
+        ports:
+          - 8888:8000
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: laravel/framework
+          ref: 1d9727160ad440d1ccf2fdcbb7e4f4f36efae212
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") docker=$(docker --version) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+      # upstream's step (matrix.php 8.4, matrix.phpunit 12.5.8, matrix.stability prefer-stable) through upstream's own
+      # composite action, which pins setup-php and retry by commit; :imagick added (see the header)
+      - name: Setup PHP project
+        uses: ./.github/actions/setup-php-project
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, gd, redis, igbinary, msgpack, memcached, gmp, :php-psr, :imagick
+          ini-values: error_reporting=E_ALL
+          redis-configure-opts: --enable-redis --enable-redis-igbinary --enable-redis-msgpack --enable-redis-lzf --with-liblzf --enable-redis-zstd --with-libzstd --enable-redis-lz4 --with-liblz4
+          redis-libs: liblz4-dev, liblzf-dev, libzstd-dev
+          composer-command: composer update --prefer-stable --prefer-dist --no-interaction --no-progress --with="phpunit/phpunit:~12.5.8"
+      - name: Execute tests
+        run: vendor/bin/phpunit --display-deprecation --no-coverage --log-junit "$RUNNER_TEMP/junit.xml"
+        env:
+          DB_PORT: ${{ job.services.mysql.ports[3306] }}
+          DB_USERNAME: root
+          DYNAMODB_CACHE_TABLE: laravel_dynamodb_test
+          DYNAMODB_ENDPOINT: "http://localhost:8888"
+          AWS_ACCESS_KEY_ID: randomKey
+          AWS_SECRET_ACCESS_KEY: randomSecret
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp "$RUNNER_TEMP/junit.xml" "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          cp vendor/composer/installed.json "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          { php --version; php -m; } > "$RUNNER_TEMP/evidence/php.txt" 2>&1 || true
+          docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' > "$RUNNER_TEMP/evidence/images.txt" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-laravel-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

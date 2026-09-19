@@ -1,0 +1,53 @@
+# ICR benchmark — ripgrep (Rust): `cargo build --release --locked` then `cargo test --all --locked` from a clean checkout of
+# the pinned upstream commit, no cache, on GitHub-hosted and ICR runners. Only Irvyne starts a run (dispatch by a writer,
+# then the icr-bench environment's approval). Timings are read from GitHub's API by the publisher.
+name: ripgrep
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: BurntSushi/ripgrep
+  UPSTREAM_REF: 3fce3b5bb0236da2df6d99672afb8a719642eca7   # master, 2026-08-04
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: BurntSushi/ripgrep
+          ref: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          rustc --version && cargo --version
+      - name: cargo build --release --locked
+        run: cargo build --release --locked
+      - name: cargo test --all --locked
+        run: cargo test --all --locked

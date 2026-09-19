@@ -1,4 +1,4 @@
-# ICR benchmark: a Linux kernel build (C, compile-heavy: clean-build throughput, not application CI) on GitHub-hosted and
+# ICR benchmark — linux: a Linux kernel build (C, compile-heavy: clean-build throughput, not application CI) on GitHub-hosted and
 # ICR runners from one pinned kernel.org tarball, verified by SHA-256 against kernel.org's list. Two modes (Astra round 13,
 # finding 6): "delivered" builds with each provider's shipped image and toolchain, setup time included — what a customer
 # gets; "controlled" builds inside the same gcc image by digest on every leg — same compiler, binutils and libc, so the
@@ -6,7 +6,7 @@
 # step in GitHub's API and the per-step timings would be lost. Only Irvyne starts a run (dispatch by a writer, then the
 # icr-bench environment's approval); pull requests are off. Timings are read from GitHub's API; evidence (config,
 # versions, packages, build log, GNU time) is uploaded per job.
-name: ICR bench · linux
+name: linux
 
 on:
   workflow_dispatch:
@@ -53,7 +53,7 @@ jobs:
       matrix:
         leg: ${{ fromJSON(inputs.legs) }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # the kernel's documented build dependencies; every leg runs this step and its duration is published (controlled mode
@@ -111,7 +111,7 @@ jobs:
           echo "modules built: $(find . -name '*.ko' | wc -l)"
           echo "kernel release: $(make -s kernelrelease)"
           du -sh . | cut -f1 | sed 's/^/tree after build: /'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: evidence-delivered-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -132,7 +132,7 @@ jobs:
       matrix:
         leg: ${{ fromJSON(inputs.legs) }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # the kernel's documented build dependencies; every leg runs this step and its duration is published (controlled mode
@@ -190,7 +190,7 @@ jobs:
           echo "modules built: $(find . -name '*.ko' | wc -l)"
           echo "kernel release: $(make -s kernelrelease)"
           du -sh . | cut -f1 | sed 's/^/tree after build: /'
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: evidence-controlled-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
