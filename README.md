@@ -43,6 +43,10 @@ every leg builds inside the same toolchain image pinned by digest.
 | `mastodon.yml` | mastodon/mastodon `3cdcf93` | upstream's `build` and `test` jobs folded into one: Ruby 4.0.7 (setup-ruby), `bundle install`, Node 24 + yarn, `assets:precompile`, `db:setup`, `flatware rspec` — Rails with PostgreSQL 14 and Redis 7 services, the heaviest services case |
 | `gitea.yml` | go-gitea/gitea `cdf786c` | upstream's `test-unit` job in full: Go 1.27, `make deps-backend`, `generate-go`, `test-backend` twice (race, gogit), `test-check` — Go with Elasticsearch, Meilisearch, Redis, MinIO and Azurite services |
 
+Each project has a notes file under `docs/projects/` (upstream job replicated and its exact commands, every deviation and
+why, third-party actions, the durations upstream's own runs show, memory, disk and image risks). Projects added on
+2026-09-19 evening run their first pilot before any result is published here.
+
 ## Results
 Pilots of 2026-09-19 (one or two attempts each, quiet node — the campaigns with more attempts follow):
 
