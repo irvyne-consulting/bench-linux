@@ -1,0 +1,78 @@
+# ICR benchmark — fastify (Node.js): fastify/fastify's own `test-unit` job, one matrix cell (Node 24 = newest LTS, ubuntu):
+# `npm install --ignore-scripts` then `npm run unit` (borp over test/**/*.test.{js,mjs}, concurrency = cpus - 1), from a clean
+# checkout of the pinned upstream commit, on GitHub-hosted and ICR runners. Two edits to upstream's job: setup-node's npm cache
+# dropped (the benchmark is cold) and borp given a second, JUnit reporter writing into the evidence directory (same tests, same
+# spec output). Only Irvyne starts a run. Evidence (JUnit, resolved dependency tree, versions) uploaded per job.
+name: fastify
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: fastify/fastify
+  UPSTREAM_REF: 630acd0b6cf8a91322ff05c3d95feb991091866d   # main, 2026-09-19 (commit of 2026-09-16, "Bumped v6.0.0-alpha.4")
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: fastify/fastify
+          ref: 630acd0b6cf8a91322ff05c3d95feb991091866d
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "image: node=$(command -v node >/dev/null && node --version || echo none) npm=$(command -v npm >/dev/null && npm --version || echo none) (setup-node installs the job's Node 24 next)"
+      # upstream's step (matrix.node-version 24), without its `cache: npm`
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          check-latest: true
+          package-manager-cache: false
+      - name: Install
+        run: |
+          node --version && npm --version
+          npm install --ignore-scripts
+      # upstream: `npm run unit`; the arguments after `--` add a JUnit file next to borp's default spec output
+      - name: Run tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          npm run unit -- --reporter=spec --reporter="junit:$RUNNER_TEMP/evidence/junit.xml"
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          npm ls --all --json > "$RUNNER_TEMP/evidence/npm-ls.json" 2>/dev/null || true
+          { echo "node $(node --version)"; echo "npm $(npm --version)"; for p in borp tstyche undici; do echo "$p $(node -p "require('./node_modules/$p/package.json').version" 2>/dev/null)"; done; } > "$RUNNER_TEMP/evidence/versions.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-fastify-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

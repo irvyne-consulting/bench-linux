@@ -1,0 +1,132 @@
+# ICR benchmark — hugo (Go): gohugoio/hugo's Linux `test` job bounded to its build and tests — upstream's toolchain setup
+# (Go 1.27.x, Node 22, Ruby + asciidoctor gems, Python + docutils, pandoc, dart-sass 1.80.3, GoAT, mage), then `mage -v hugo`
+# and `go test ./... -tags extended,withdeploy` (mage's Test target in its single-invocation form, `-json` into the evidence
+# file), from a clean checkout of the pinned upstream commit, no cache, on GitHub-hosted and ICR runners. Dropped versus
+# upstream, whose job takes ~60 min on GitHub: free-disk-space, staticcheck (~15 min), gotmplfmt/gofmt/vet, the per-package
+# -race loop (~41 min) and the dragonfly cross-build; ruby/setup-ruby replaced by apt's ruby. Only Irvyne starts a run.
+name: hugo
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: gohugoio/hugo
+  UPSTREAM_REF: 51cd9e6c7e9b33dc3836e28ac30a3b9260dd1b4e   # master, 2026-09-19
+  # upstream's env
+  GOPROXY: https://proxy.golang.org
+  GO111MODULE: on
+  SASS_VERSION: 1.80.3
+  DART_SASS_SHA_LINUX: 7c933edbad0a7d389192c5b79393485c088bd2c4398e32f5754c32af006a9ffd
+  # upstream sets this on its Check step; mage reads it for the build tags
+  HUGO_BUILD_TAGS: extended,withdeploy
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: gohugoio/hugo
+          ref: 51cd9e6c7e9b33dc3836e28ac30a3b9260dd1b4e
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "image: go=$(command -v go >/dev/null && go version || echo 'not on PATH') node=$(command -v node >/dev/null && node --version || echo none) ruby=$(command -v ruby >/dev/null && ruby --version || echo none) python3=$(command -v python3 >/dev/null && python3 --version || echo none) gcc=$(gcc --version | head -1) disk_free=$(df -h --output=avail / | tail -1 | tr -d ' ')"
+      # upstream's steps, in upstream's order, minus what the header lists
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.27.x
+          check-latest: true
+          cache: false
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      # upstream: ruby/setup-ruby (Ruby 3.4.5) here and `apt-get install pandoc` later; both from apt in one step, since the ICR
+      # image ships no Ruby (GitHub's images already have ruby and this is then a no-op for it)
+      - name: Install Ruby and pandoc (apt)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ruby pandoc
+      - name: Install Ruby gems
+        run: |
+          sudo gem install asciidoctor -v "2.0.26"
+          sudo gem install asciidoctor-diagram -v "3.1.0"
+          sudo gem install asciidoctor-html5s -v "0.5.1"
+      - name: Install GoAT
+        run: go install github.com/blampe/goat/cmd/goat@177de93b192b8ffae608e5d9ec421cc99bf68402
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install Mage
+        run: go install github.com/magefile/mage@v1.15.0
+      - name: Install docutils
+        run: |
+          pip install docutils Pygments
+          rst2html --version
+      - name: Install dart-sass Linux
+        run: |
+          echo "Install Dart Sass version ${SASS_VERSION} ..."
+          curl -LJO "https://github.com/sass/dart-sass/releases/download/${SASS_VERSION}/dart-sass-${SASS_VERSION}-linux-x64.tar.gz";
+          echo "${DART_SASS_SHA_LINUX}  dart-sass-${SASS_VERSION}-linux-x64.tar.gz" | sha256sum -c;
+          tar -xvf "dart-sass-${SASS_VERSION}-linux-x64.tar.gz";
+          echo "$GOBIN"
+          echo "$GITHUB_WORKSPACE/dart-sass/" >> $GITHUB_PATH
+      - name: Toolchain facts
+        run: |
+          go version; go env GOROOT CGO_ENABLED; node --version; ruby --version; asciidoctor --version | head -1; pandoc -v | head -1; rst2html --version; sass --version; mage -version; gcc --version | head -1
+      # upstream's Check step is Fmt + Vet + the per-package `go test -p 2 -race` loop (isCI); replaced by the build target and
+      # the Test target's single-invocation form, with -json for the evidence (same packages, same tags, no race)
+      - name: mage -v hugo
+        run: |
+          mage -v hugo
+          ./hugo version
+      - name: go test ./... -tags extended,withdeploy
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          go test -json -tags extended,withdeploy ./... > "$RUNNER_TEMP/evidence/go-test.json"
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          f="$RUNNER_TEMP/evidence/go-test.json"
+          if [ -s "$f" ]; then
+            echo "packages: pass=$(grep -v '"Test":' "$f" | grep -c '"Action":"pass"') fail=$(grep -v '"Test":' "$f" | grep -c '"Action":"fail"') skip=$(grep -v '"Test":' "$f" | grep -c '"Action":"skip"')"
+            echo "tests: pass=$(grep '"Test":' "$f" | grep -c '"Action":"pass"') fail=$(grep '"Test":' "$f" | grep -c '"Action":"fail"') skip=$(grep '"Test":' "$f" | grep -c '"Action":"skip"')"
+            grep '"Action":"fail"' "$f" | cut -c1-300 | head -50
+          fi
+          { go version; go env GOVERSION GOOS GOARCH CGO_ENABLED GOFLAGS; ./hugo version 2>/dev/null; node --version; ruby --version; asciidoctor --version | head -1; pandoc -v | head -1; rst2html --version; sass --version; mage -version; gcc --version | head -1; } > "$RUNNER_TEMP/evidence/versions.txt" 2>&1 || true
+          { df -h /; du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)"; } > "$RUNNER_TEMP/evidence/disk.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-hugo-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

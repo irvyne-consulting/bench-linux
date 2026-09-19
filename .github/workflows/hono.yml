@@ -1,0 +1,133 @@
+# ICR benchmark — hono (TypeScript): honojs/hono's own `Main` job (Node 24.7.0 and Bun 1.2.19 from upstream's .tool-versions:
+# bun install --frozen-lockfile, format, lint, editorconfig-checker, build, test = tsc + vitest over all its projects) and its
+# `Bun` job (bun test of runtime-tests/bun) as the second job `bench-bun`, from a clean checkout of the pinned upstream commit,
+# no cache, on GitHub-hosted and ICR runners. Upstream's oven-sh/setup-bun action is kept (version tag), as upstream's setup-node; nothing else changes. The Deno, Fastly, workerd, Lambda,
+# Node-matrix and JSR jobs are not replicated. Only Irvyne starts a run. Evidence (coverage JSON / lcov, versions) per job.
+name: hono
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: honojs/hono
+  UPSTREAM_REF: 098e11912ab244c5c33931de007f04dc8e3c2929   # main, 2026-09-19 (commit of 2026-09-15, release 4.13.8)
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: honojs/hono
+          ref: 098e11912ab244c5c33931de007f04dc8e3c2929
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "image: node=$(command -v node >/dev/null && node --version || echo none) bun=$(command -v bun >/dev/null && bun --version || echo none); upstream pins: $(tr '\n' ' ' < .tool-versions)"
+      # upstream's steps: actions/setup-node (node-version-file) and oven-sh/setup-bun (bun-version-file), both reading .tool-versions
+      - name: Setup Node pinned by .tool-versions
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.tool-versions'
+          package-manager-cache: false
+      - name: Setup Bun pinned by .tool-versions
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Toolchain
+        run: bun --version && node --version
+      - name: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
+      - name: bun run format
+        run: bun run format
+      - name: bun run lint
+        run: bun run lint
+      - name: bun run editorconfig-checker
+        run: bun run editorconfig-checker -format github-actions
+      - name: bun run build
+        run: bun run build
+      - name: bun run test
+        run: bun run test
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp coverage/raw/default/coverage-final.json "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          { echo "node $(node --version)"; echo "bun $(bun --version)"; for p in vitest typescript eslint prettier @vitest/coverage-v8; do echo "$p $(node -p "require('./node_modules/$p/package.json').version" 2>/dev/null)"; done; } > "$RUNNER_TEMP/evidence/versions.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-hono-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90
+
+  bench-bun:
+    name: bun ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: honojs/hono
+          ref: 098e11912ab244c5c33931de007f04dc8e3c2929
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          echo "image: node=$(command -v node >/dev/null && node --version || echo none) bun=$(command -v bun >/dev/null && bun --version || echo none); upstream pins: $(tr '\n' ' ' < .tool-versions)"
+      # upstream's step: oven-sh/setup-bun (bun-version-file .tool-versions)
+      - name: Setup Bun pinned by .tool-versions
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Toolchain
+        run: bun --version && node --version
+      - name: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
+      - name: bun run test:bun
+        run: bun run test:bun
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp coverage/raw/bun/lcov.info "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          echo "bun $(bun --version)" > "$RUNNER_TEMP/evidence/versions.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-hono-bun-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

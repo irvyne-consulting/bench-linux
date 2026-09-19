@@ -32,6 +32,9 @@ every leg builds inside the same toolchain image pinned by digest.
 | `petclinic.yml` | spring-projects/spring-petclinic `818c413` | `./mvnw -B verify` on Temurin 17 (format checks, unit and Testcontainers tests, jar) — Java/Maven |
 | `seed4j.yml` | seed4j/seed4j `2adf56c` (successor of the archived jhipster-lite) | upstream's `tests-linux` job: `npm ci`, `npm run lint:ci`, `./mvnw -B clean verify` on Temurin 25 + Node 24 (Vue front end built inside Maven, Vitest, Cypress component tests, Spring Boot ITs) — Java + Node full stack |
 | `vite.yml` | vitejs/vite `e9078f8` | `pnpm install`, `pnpm run build`, `pnpm run test-unit` on Node 24, pnpm 12.4.2 via corepack; the browser suites are left out — TypeScript monorepo |
+| `hono.yml` | honojs/hono `098e119` (4.13.8) | upstream's `Main` job (Node 24.7 + Bun 1.2.19 from `.tool-versions`: install, format, lint, editorconfig, build, tsc + vitest) and its `Bun` job as a second job — TypeScript |
+| `fastify.yml` | fastify/fastify `630acd0` (6.0.0-alpha.4) | `npm install --ignore-scripts`, `npm run unit` (borp) on Node 24 — Node.js |
+| `hugo.yml` | gohugoio/hugo `51cd9e6` | upstream's toolchain (Go 1.27, Node 22, asciidoctor gems, pandoc, dart-sass, mage), then `mage -v hugo` and `go test -tags extended,withdeploy ./...` — the 60-minute upstream job without staticcheck, the race loop and the cross-build — Go |
 
 ## Results
 Pilots of 2026-09-19 (one or two attempts each, quiet node — the campaigns with more attempts follow):
