@@ -61,7 +61,7 @@ jobs:
           echo "python3 on the image: $(python3 --version 2>&1) — $(rustc --version 2>&1) — $(cargo --version 2>&1)"
       # upstream's step (astral-sh/setup-uv pinned by commit upstream, v10) with python-version 3.14; enable-cache false instead
       # of true, and the uv release pinned — the latest on 2026-09-19, which upstream's `required-version >= 0.8.4` resolves to
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0   # no v10 major tag exists on that repository; the full version tag does
         with:
           version: "0.12.17"
           python-version: '3.14'
