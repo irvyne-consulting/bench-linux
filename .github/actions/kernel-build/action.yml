@@ -1,0 +1,76 @@
+name: Kernel build
+description: Download a pinned kernel.org tarball, verify it, configure and build it; every step timed by GitHub. Used by both modes.
+inputs:
+  kernel:
+    description: kernel.org stable version
+    required: true
+  config:
+    description: configuration target (x86_64_defconfig or allmodconfig)
+    required: true
+runs:
+  using: composite
+  steps:
+    # the kernel's documented build dependencies; every leg runs this step and its duration is published. In the controlled
+    # mode the job runs as root inside the gcc image (no sudo); in the delivered mode as the runner user with sudo.
+    - name: Build dependencies (apt)
+      shell: bash
+      run: |
+        SUDO=$(command -v sudo || true)
+        $SUDO apt-get update -qq
+        $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends build-essential flex bison bc libelf-dev libssl-dev dwarves cpio kmod rsync python3 time procps curl xz-utils ca-certificates >/dev/null
+    - name: Runner facts
+      shell: bash
+      env:
+        KERNEL: ${{ inputs.kernel }}
+        KCONFIG: ${{ inputs.config }}
+      run: |
+        echo "runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G host_kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") gcc=$(gcc -dumpfullversion) binutils=$(ld --version | head -1 | awk '{print $NF}') make=$(make --version | head -1 | awk '{print $NF}') target=linux-$KERNEL $KCONFIG"
+        mkdir -p evidence
+        { echo "os: $(. /etc/os-release && echo "$PRETTY_NAME")"; echo "host kernel: $(uname -r)"; echo "cpus: $(nproc)"; gcc --version | head -1; ld --version | head -1; make --version | head -1; } > evidence/versions.txt
+        dpkg-query -W -f='${Package} ${Version}\n' > evidence/packages.txt
+    # the tarball and kernel.org's SHA-256 list, both over TLS from cdn.kernel.org; the PGP signature on the list is not verified
+    - name: Download and verify
+      shell: bash
+      env:
+        KERNEL: ${{ inputs.kernel }}
+      run: |
+        set -euo pipefail
+        MAJ=${KERNEL%%.*}
+        curl -fsSLo linux.tar.xz "https://cdn.kernel.org/pub/linux/kernel/v$MAJ.x/linux-$KERNEL.tar.xz"
+        curl -fsSLo sha256sums.asc "https://cdn.kernel.org/pub/linux/kernel/v$MAJ.x/sha256sums.asc"
+        want=$(awk -v f="linux-$KERNEL.tar.xz" '$2==f {print $1}' sha256sums.asc); [ -n "$want" ] || { echo "no checksum for linux-$KERNEL.tar.xz"; exit 1; }
+        echo "$want  linux.tar.xz" | sha256sum -c -
+        ls -l linux.tar.xz
+    - name: Extract
+      shell: bash
+      env:
+        KERNEL: ${{ inputs.kernel }}
+      run: tar -xf linux.tar.xz && mv "linux-$KERNEL" linux && du -sh linux | cut -f1
+    - name: Configure
+      shell: bash
+      working-directory: linux
+      env:
+        KCONFIG: ${{ inputs.config }}
+      run: |
+        make -s "$KCONFIG"
+        echo "options enabled: $(grep -c '=y' .config)"
+        cp .config ../evidence/config
+    # the measured step: bzImage and modules, explicit targets, every core, no ccache; fixed build metadata (no claim of
+    # reproducible binaries is made)
+    - name: Build (make bzImage modules)
+      shell: bash
+      working-directory: linux
+      env:
+        KBUILD_BUILD_TIMESTAMP: "2026-01-01T00:00:00Z"
+        KBUILD_BUILD_USER: icr-bench
+        KBUILD_BUILD_HOST: icr-bench
+      run: /usr/bin/time -v -o ../evidence/time.txt make -s -j"$(nproc)" bzImage modules 2>&1 | grep -v -E '^\s*$' | tail -20
+    - name: Result
+      shell: bash
+      working-directory: linux
+      run: |
+        ls -l arch/x86/boot/bzImage vmlinux
+        echo "modules built: $(find . -name '*.ko' | wc -l)"
+        echo "kernel release: $(make -s kernelrelease)"
+        grep -E "Elapsed|Maximum resident|Percent of CPU" ../evidence/time.txt
+        du -sh . | cut -f1 | sed 's/^/tree after build: /'

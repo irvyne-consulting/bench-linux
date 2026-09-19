@@ -1,0 +1,100 @@
+# ICR benchmark: a Linux kernel build (C, compile-heavy: clean-build throughput, not application CI) on GitHub-hosted and
+# ICR runners from one pinned kernel.org tarball, verified by SHA-256 against kernel.org's list. Two modes (Astra round 13,
+# finding 6): "delivered" builds with each provider's shipped image and toolchain, setup time included — what a customer
+# gets; "controlled" builds inside the same gcc image by digest on every leg — same compiler, binutils and libc, so the
+# rows compare the same work. Only Irvyne starts a run (dispatch by a writer, then the icr-bench environment's approval);
+# pull requests are off. Timings are read from GitHub's API; evidence (config, versions, packages, time) is uploaded per job.
+name: ICR bench · linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (one at a time gives the cleanest numbers)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      kernel:
+        description: kernel.org stable version (linux-<version>.tar.xz from cdn.kernel.org)
+        default: "7.2.6"
+        type: string
+      config:
+        description: configuration target
+        default: x86_64_defconfig
+        type: choice
+        options: [x86_64_defconfig, allmodconfig]
+      mode:
+        description: delivered (each provider's image), controlled (same gcc image by digest everywhere) or both
+        default: delivered
+        type: choice
+        options: [delivered, controlled, both]
+      note:
+        description: free text echoed in the run (campaign, run number, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  delivered:
+    if: inputs.mode != 'controlled'
+    name: delivered · ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Note
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: echo "leg=$LEG mode=delivered note=$NOTE"
+      - uses: ./.github/actions/kernel-build
+        with:
+          kernel: ${{ inputs.kernel }}
+          config: ${{ inputs.config }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: evidence-delivered-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 90
+
+  controlled:
+    if: inputs.mode != 'delivered'
+    name: controlled · ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 360
+    # the same toolchain on every leg: Docker Hub's gcc 16.2.0 image, pinned by digest (Debian-based; gcc, binutils, make)
+    container:
+      image: gcc:16.2.0@sha256:2a331803401589666ce26be5fb6d97fad3d83fb6072c305d6fe430ce5604acc8
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Note
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: echo "leg=$LEG mode=controlled note=$NOTE"
+      - uses: ./.github/actions/kernel-build
+        with:
+          kernel: ${{ inputs.kernel }}
+          config: ${{ inputs.config }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: evidence-controlled-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 90
