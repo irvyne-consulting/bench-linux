@@ -88,7 +88,14 @@ jobs:
         working-directory: linux
         run: |
           make -s "$KCONFIG"
-          echo "options enabled: $(grep -c '=y' .config)"
+          if [ "$KCONFIG" = allmodconfig ]; then
+            # allmodconfig turns on WERROR and DWARF debug info: the first fails the build on any warning a newer or older
+            # compiler emits, the second multiplies the output past what GitHub's runner disk holds. Both off (and BTF, which
+            # needs pahole), everything else as allmodconfig sets it; the resulting .config is in the evidence.
+            scripts/config -d WERROR -d DEBUG_INFO -d DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_DWARF5 -e DEBUG_INFO_NONE -d GDB_SCRIPTS -d DEBUG_INFO_BTF
+            make -s olddefconfig
+          fi
+          echo "options enabled: $(grep -c '=y' .config), modules: $(grep -c '=m' .config)"
           cp .config ../evidence/config
       # the measured step: bzImage and modules, explicit targets, every core, no ccache; fixed build metadata (no claim of
       # reproducible binaries is made); output goes to a file, a failure prints its tail
@@ -167,7 +174,14 @@ jobs:
         working-directory: linux
         run: |
           make -s "$KCONFIG"
-          echo "options enabled: $(grep -c '=y' .config)"
+          if [ "$KCONFIG" = allmodconfig ]; then
+            # allmodconfig turns on WERROR and DWARF debug info: the first fails the build on any warning a newer or older
+            # compiler emits, the second multiplies the output past what GitHub's runner disk holds. Both off (and BTF, which
+            # needs pahole), everything else as allmodconfig sets it; the resulting .config is in the evidence.
+            scripts/config -d WERROR -d DEBUG_INFO -d DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT -d DEBUG_INFO_DWARF4 -d DEBUG_INFO_DWARF5 -e DEBUG_INFO_NONE -d GDB_SCRIPTS -d DEBUG_INFO_BTF
+            make -s olddefconfig
+          fi
+          echo "options enabled: $(grep -c '=y' .config), modules: $(grep -c '=m' .config)"
           cp .config ../evidence/config
       # the measured step: bzImage and modules, explicit targets, every core, no ccache; fixed build metadata (no claim of
       # reproducible binaries is made); output goes to a file, a failure prints its tail

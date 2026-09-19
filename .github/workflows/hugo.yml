@@ -17,6 +17,11 @@ on:
         description: free text echoed in the run (campaign, block, host condition)
         default: ""
         type: string
+      mode:
+        description: bounded = mage -v hugo + go test ./... (about 15 min on 4 vCPU); full = upstream's `mage -v check` (fmt, vet, the per-package -race loop; about an hour)
+        default: bounded
+        type: choice
+        options: [bounded, full]
 
 permissions:
   contents: read
@@ -105,10 +110,18 @@ jobs:
       # upstream's Check step is Fmt + Vet + the per-package `go test -p 2 -race` loop (isCI); replaced by the build target and
       # the Test target's single-invocation form, with -json for the evidence (same packages, same tags, no race)
       - name: mage -v hugo
+        if: inputs.mode == 'bounded'
         run: |
           mage -v hugo
           ./hugo version
+      # upstream's Check step in full: Fmt, Vet, then `go test -p 2 -race` package by package (CI form), about an hour on 4 vCPU
+      - name: mage -v check (upstream's full check)
+        if: inputs.mode == 'full'
+        env:
+          CI: "true"
+        run: mage -v check
       - name: go test ./... -tags extended,withdeploy
+        if: inputs.mode == 'bounded'
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
           go test -json -tags extended,withdeploy ./... > "$RUNNER_TEMP/evidence/go-test.json"

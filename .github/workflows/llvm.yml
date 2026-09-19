@@ -1,0 +1,81 @@
+# ICR benchmark — llvm (C++): a Release build of Clang for X86 from the LLVM monorepo at a pinned commit (CMake + Ninja,
+# no ccache, assertions off, tests, examples and docs not built, two parallel link jobs), on GitHub-hosted and ICR
+# runners. This is not an upstream CI job (LLVM's own CI runs on its infrastructure): it is a bounded, well-known heavy
+# C++ compilation of about two hours on a 4 vCPU GitHub runner, chosen to show CPU, disk and network together — the
+# checkout alone moves about 1.5 GB. Only Irvyne starts a run. Evidence (versions, build log, GNU time) uploaded.
+name: llvm
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (icr-2c is left out by default — 8 GiB and two threads for a Clang build)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: llvm/llvm-project
+  UPSTREAM_REF: 123c5db6b4e9ca0ae665db29585fe3d8757c5570   # main, 2026-09-19
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: llvm/llvm-project
+          ref: 123c5db6b4e9ca0ae665db29585fe3d8757c5570
+          persist-credentials: false
+      - name: Build dependencies (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends cmake ninja-build build-essential python3 time procps >/dev/null
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") gcc=$(gcc -dumpfullversion) cmake=$(cmake --version | head -1 | awk '{print $3}') ninja=$(ninja --version) upstream=$UPSTREAM@$(git rev-parse HEAD) free=$(df -h --output=avail . | tail -1 | tr -d ' ')"
+          mkdir -p evidence
+          { echo "leg: $LEG"; echo "os: $(. /etc/os-release && echo "$PRETTY_NAME")"; echo "cpus: $(nproc)"; gcc --version | head -1; cmake --version | head -1; echo "ninja $(ninja --version)"; df -h --output=size,used,avail . | tail -1; } > evidence/versions.txt
+      # Release Clang for X86 only; compression and XML libraries forced off so both legs build the same thing whatever
+      # -dev packages their image carries; two link jobs bound the memory peak
+      - name: Configure (cmake)
+        run: |
+          cmake -S llvm -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_PROJECTS=clang -DLLVM_TARGETS_TO_BUILD=X86 \
+            -DLLVM_ENABLE_ASSERTIONS=OFF -DLLVM_INCLUDE_TESTS=OFF -DLLVM_INCLUDE_EXAMPLES=OFF -DLLVM_INCLUDE_BENCHMARKS=OFF -DLLVM_INCLUDE_DOCS=OFF \
+            -DCLANG_INCLUDE_TESTS=OFF -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBXML2=OFF > evidence/cmake.log 2>&1
+          tail -3 evidence/cmake.log
+      - name: Build (ninja clang)
+        run: |
+          set +e
+          /usr/bin/time -v -o evidence/time.txt ninja -C build clang > evidence/build.log 2>&1; rc=$?
+          tail -5 evidence/build.log
+          grep -E "Elapsed|Maximum resident|Percent of CPU|Exit status" evidence/time.txt
+          exit $rc
+      - name: Result
+        run: |
+          build/bin/clang --version | head -1
+          printf 'int main(void){return 0;}\n' > t.c && build/bin/clang -O2 t.c -o t && ./t && echo "the built clang compiles and links a program"
+          echo "build tree: $(du -sh build | cut -f1)"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-llvm-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 90

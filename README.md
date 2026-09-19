@@ -26,7 +26,7 @@ every leg builds inside the same toolchain image pinned by digest.
 ## Projects
 | workflow | upstream, pinned commit | what runs |
 |---|---|---|
-| `linux.yml` | kernel.org `linux-7.2.6.tar.xz` | `x86_64_defconfig`, `make -j$(nproc) bzImage modules`; delivered toolchain or the same `gcc:16.2.0` image everywhere |
+| `linux.yml` | kernel.org `linux-7.2.6.tar.xz` | `x86_64_defconfig` (about 11 min on GitHub's 4 vCPU) or `allmodconfig` (hours; WERROR and debug info off so it fits the runner disk), `make -j$(nproc) bzImage modules`; delivered toolchain or the same `gcc:16.2.0` image everywhere |
 | `ripgrep.yml` | BurntSushi/ripgrep `3fce3b5` | `cargo build --release --locked`, `cargo test --all --locked` |
 | `laravel.yml` | laravel/framework `1d97271` | upstream's `linux_tests` job, one cell (PHP 8.4, PHPUnit 12.5.8) with MySQL, Redis, Memcached, DynamoDB service containers |
 | `petclinic.yml` | spring-projects/spring-petclinic `818c413` | `./mvnw -B verify` on Temurin 17 (format checks, unit and Testcontainers tests, jar) — Java/Maven |
@@ -34,7 +34,8 @@ every leg builds inside the same toolchain image pinned by digest.
 | `vite.yml` | vitejs/vite `e9078f8` | `pnpm install`, `pnpm run build`, `pnpm run test-unit` on Node 24, pnpm 12.4.2 via corepack; the browser suites are left out — TypeScript monorepo |
 | `hono.yml` | honojs/hono `098e119` (4.13.8) | upstream's `Main` job (Node 24.7 + Bun 1.2.19 from `.tool-versions`: install, format, lint, editorconfig, build, tsc + vitest) and its `Bun` job as a second job — TypeScript |
 | `fastify.yml` | fastify/fastify `630acd0` (6.0.0-alpha.4) | `npm install --ignore-scripts`, `npm run unit` (borp) on Node 24 — Node.js |
-| `hugo.yml` | gohugoio/hugo `51cd9e6` | upstream's toolchain (Go 1.27, Node 22, asciidoctor gems, pandoc, dart-sass, mage), then `mage -v hugo` and `go test -tags extended,withdeploy ./...` — the 60-minute upstream job without staticcheck, the race loop and the cross-build — Go |
+| `hugo.yml` | gohugoio/hugo `51cd9e6` | upstream's toolchain (Go 1.27, Node 22, asciidoctor gems, pandoc, dart-sass, mage), then `mage -v hugo` and `go test -tags extended,withdeploy ./...` (bounded, about 15 min on 4 vCPU) or upstream's full `mage -v check` with the per-package race loop (mode `full`, about an hour) — Go |
+| `llvm.yml` | llvm/llvm-project `123c5db` | Release Clang for X86 with CMake + Ninja, assertions and tests off, two link jobs — about two hours on GitHub's 4 vCPU; a 1.5 GB checkout — heavy C++ (not an upstream CI job) |
 | `uv.yml` | astral-sh/uv `220b3ee` | upstream's `cargo test on linux` job in full: mold, Rust 1.98.1, uv 0.12.13 (SHA-256 pinned), nine test Pythons, then `cargo nextest run` with upstream's profile, build and tests read apart — large Rust workspace |
 | `nushell.yml` | nushell/nushell `de33b54` | upstream's `cargo` job, root workspace on Ubuntu: fmt check, clippy, build, tests, doc tests with upstream's ci profile, Rust 1.96.1 — Rust application |
 | `duckdb.yml` | duckdb/duckdb `3a604ab` (v2.0-cyanoptera) | upstream's `linux-release` job (amd64 compatibility cell) inside upstream's manylinux CI image pinned by digest: `make release` with the release extensions and jemalloc, smoke tests, symbol and library checks; vcpkg bootstrapped, no ccache — C++, toolchain identical on every leg by construction |
