@@ -29,6 +29,9 @@ every leg builds inside the same toolchain image pinned by digest.
 | `linux.yml` | kernel.org `linux-7.2.6.tar.xz` | `x86_64_defconfig`, `make -j$(nproc) bzImage modules`; delivered toolchain or the same `gcc:16.2.0` image everywhere |
 | `ripgrep.yml` | BurntSushi/ripgrep `3fce3b5` | `cargo build --release --locked`, `cargo test --all --locked` |
 | `laravel.yml` | laravel/framework `1d97271` | upstream's `linux_tests` job, one cell (PHP 8.4, PHPUnit 12.5.8) with MySQL, Redis, Memcached, DynamoDB service containers |
+| `petclinic.yml` | spring-projects/spring-petclinic `818c413` | `./mvnw -B verify` on Temurin 17 (format checks, unit and Testcontainers tests, jar) — Java/Maven |
+| `seed4j.yml` | seed4j/seed4j `2adf56c` (successor of the archived jhipster-lite) | upstream's `tests-linux` job: `npm ci`, `npm run lint:ci`, `./mvnw -B clean verify` on Temurin 25 + Node 24 (Vue front end built inside Maven, Vitest, Cypress component tests, Spring Boot ITs) — Java + Node full stack |
+| `vite.yml` | vitejs/vite `e9078f8` | `pnpm install`, `pnpm run build`, `pnpm run test-unit` on Node 24, pnpm 12.4.2 via corepack; the browser suites are left out — TypeScript monorepo |
 
 ## Results
 Pilots of 2026-09-19 (one or two attempts each, quiet node — the campaigns with more attempts follow):

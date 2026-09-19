@@ -1,0 +1,95 @@
+# ICR benchmark — jhipster-lite (Java 21 + Vue, Maven): seed4j/seed4j's own `tests-linux` job — `npm ci`, `npm run
+# lint:ci`, `./mvnw clean verify` (Checkstyle, Error Prone compile, front-end build, 261 JUnit/Cucumber/ArchUnit test classes,
+# Vitest, 7 Spring Boot ITs incl. a MongoDB Testcontainer, Cypress component tests, JaCoCo 100 % gate, jars) from a clean
+# checkout of the pinned upstream commit (repository archived 2025-08, continued as seed4j/seed4j), no cache. Edits: the local
+# SonarQube containers and analyses dropped, `-B` instead of upstream's settings.xml edit, no `npm install -g npm`, Cypress's
+# X/GTK libraries installed only where the image lacks them (ICR). Only Irvyne starts a run. Evidence uploaded per job.
+name: seed4j
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: seed4j/seed4j
+  UPSTREAM_REF: 2adf56c6aacc1c57a1f1ad48f036c9f773161d60   # main, 2026-09-19 (seed4j is the maintained successor of the archived jhipster-lite)
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: seed4j/seed4j
+          ref: 2adf56c6aacc1c57a1f1ad48f036c9f773161d60
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") docker=$(docker --version) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+      # upstream's composite ./.github/actions/setup (Temurin 21, Node `lts/*` = 24 today) without `check-latest`, its
+      # `npm install -g npm` and its ~/.m2/settings.xml edit (replaced by -B below); no cache. Both JDK and Node come from
+      # the images' tool cache.
+      - name: 'Setup: Java 21'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: 'Setup: Node.js 24'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Toolchain
+        run: java -version && node --version && npm --version
+      # the Cypress component tests inside `mvnw verify` run headless Electron: Xvfb and the GTK/NSS/ALSA libraries are on
+      # GitHub's images (Chrome, xvfb) but not on the ICR image — installed there only, timed as this step
+      - name: Cypress system libraries when the image lacks them
+        run: |
+          if command -v Xvfb >/dev/null 2>&1 && ldconfig -p | grep -q 'libgtk-3.so.0' && ldconfig -p | grep -q 'libnss3.so' && ldconfig -p | grep -q 'libasound.so.2'; then
+            echo "Xvfb, GTK 3, NSS and ALSA present"
+          else
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends xvfb libgtk-3-0t64 libgbm1 libnss3 libasound2t64 libxss1 libnotify4 libxtst6 xauth
+          fi
+      - name: 'Init: install Node.js packages'
+        run: npm ci
+      - name: 'Lint: check'
+        run: npm run lint:ci
+      - name: 'Test: run backend tests'
+        run: ./mvnw -B clean verify
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp target/surefire-reports/TEST-*.xml "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          cp target/failsafe-reports/TEST-*.xml "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          cp target/jacoco/jacoco.xml "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          cp target/test-results/TESTS-results-sonar.xml "$RUNNER_TEMP/evidence/vitest-unit.xml" 2>/dev/null || true
+          { java -version; node --version; npm --version; ./mvnw -B -v; } > "$RUNNER_TEMP/evidence/tools.txt" 2>&1 || true
+          docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' > "$RUNNER_TEMP/evidence/images.txt" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-seed4j-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

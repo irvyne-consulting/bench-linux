@@ -1,0 +1,83 @@
+# ICR benchmark — vite (TypeScript, pnpm monorepo): vitejs/vite's own "Build&Test" job, one cell (Node 24, ubuntu-latest),
+# reduced to `pnpm install`, `pnpm run build`, `pnpm run test-unit` (Vitest unit tests; the three Playwright/Chromium
+# playground suites test-serve, test-serve-bundled, test-build left out), from a clean checkout of the pinned upstream commit,
+# no cache, on GitHub-hosted and ICR runners. pnpm 12.4.2 via corepack instead of pnpm/action-setup, setup-node without its
+# pnpm cache, no Playwright download. Only Irvyne starts a run. Evidence (Vitest JUnit report, tool versions) uploaded per job.
+name: vite
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: vitejs/vite
+  UPSTREAM_REF: e9078f865cdff6bed77cd729214a7e2868f126b5   # main, 2026-09-18
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 30
+    env:
+      # upstream's job env, verbatim
+      NODE_OPTIONS: --max-old-space-size=6144
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      VITEST_SEGFAULT_RETRY: 3
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: vitejs/vite
+          ref: e9078f865cdff6bed77cd729214a7e2868f126b5
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") upstream=$UPSTREAM@$(git rev-parse HEAD)"
+      # upstream's cell node_version 24 (Active LTS, in both images' tool cache; upstream builds every cell with it), no cache
+      - name: Set node version to 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      # upstream: pnpm/action-setup reading `packageManager: pnpm@12.4.2` — same version through corepack
+      - name: Install pnpm
+        run: corepack enable && corepack prepare pnpm@12.4.2 --activate && node --version && pnpm --version
+      - name: Install deps
+        run: pnpm install
+      - name: Build
+        run: pnpm run build
+      # upstream's `pnpm run test-unit` (= `vitest run`) plus a JUnit reporter for the evidence — pnpm passes everything after
+      # the script name to the script itself (no `--`: pnpm would forward it and vitest would then ignore the flags)
+      - name: Test unit
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          pnpm run test-unit --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/evidence/vitest-unit.xml"
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          { node --version; pnpm --version; pnpm ls --depth 0 -w --json; } > "$RUNNER_TEMP/evidence/tools.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-vite-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

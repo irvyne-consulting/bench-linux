@@ -1,0 +1,74 @@
+# ICR benchmark — petclinic (Java, Maven): spring-petclinic's own "Java CI with Maven" job, its single cell (JDK 17):
+# `./mvnw -B verify` (format and nohttp checks, compile, JUnit tests incl. the MySQL Testcontainers and Postgres docker-compose
+# integration tests, JaCoCo, jar) from a clean checkout of the pinned upstream commit, no cache, on GitHub-hosted and ICR
+# runners. Two edits to upstream's job: `distribution: temurin` instead of the deprecated `adopt` alias (Temurin 17 is in both
+# images' tool cache, nothing downloaded) and `cache: maven` removed (cold by design). Only Irvyne starts a run. Evidence
+# (Surefire XML, JaCoCo XML, JDK and Maven versions, image digests) uploaded per job.
+name: petclinic
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: spring-projects/spring-petclinic
+  UPSTREAM_REF: 818c4136ea971c21674525f9053de0d9c7ad8cfe   # main, 2026-08-26
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: spring-projects/spring-petclinic
+          ref: 818c4136ea971c21674525f9053de0d9c7ad8cfe
+          persist-credentials: false
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") docker=$(docker --version) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+      # upstream's step (matrix.java 17): temurin instead of adopt, no cache — the JDK comes from the image's tool cache on
+      # every leg (the images' default JDK differs: 17 on Ubuntu 24.04, 25 on 26.04)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+      - name: Toolchain
+        run: java -version
+      - name: Build with Maven Wrapper
+        run: ./mvnw -B verify
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp target/surefire-reports/TEST-*.xml "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          cp target/site/jacoco/jacoco.xml "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          { java -version; ./mvnw -B -v; } > "$RUNNER_TEMP/evidence/java.txt" 2>&1 || true
+          docker images --digests --format '{{.Repository}}:{{.Tag}} {{.Digest}}' > "$RUNNER_TEMP/evidence/images.txt" 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-petclinic-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90
