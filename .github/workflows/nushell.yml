@@ -1,0 +1,95 @@
+# ICR benchmark — nushell (Rust): nushell/nushell's own CI job "`cargo` in root (Ubuntu)" — fmt, clippy, build, test and
+# doctest of the whole workspace (all targets, `ci` profile, `.cargo/ci.toml`) with Rust 1.96.1 from rust-toolchain.toml —
+# from a clean checkout of the pinned upstream commit, on GitHub-hosted and ICR runners. Edits: Swatinem/rust-cache dropped
+# (cold by design) and the toolchain installed explicitly with the minimal profile (upstream leaves it to rustup's implicit
+# install, whose default profile would add rust-docs) before upstream's own `rustup component add` steps. Only Irvyne
+# starts a run. Evidence (versions, the built `nu --version`) uploaded per job.
+name: nushell
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: nushell/nushell
+  UPSTREAM_REF: de33b5407da7bf938bc930f1ab365fc15f942dbf   # main, 2026-09-19
+  # upstream's ci.yml env, unchanged (MAIN_OPTIONS is the Ubuntu cell's `options`)
+  NU_LOG_LEVEL: DEBUG
+  NU_TEST_SKIP_DEPS_BUILD: true
+  CLIPPY_OPTIONS: "-D warnings"
+  NUSHELL_CARGO_PROFILE: ci
+  MAIN_OPTIONS: --workspace --all-targets
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: nushell/nushell
+          ref: de33b5407da7bf938bc930f1ab365fc15f942dbf
+          persist-credentials: false
+      # rustup is asked for its version from $RUNNER_TEMP: in the checkout it would resolve rust-toolchain.toml and install
+      # the toolchain in this step instead of the next one
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") rustup=$(cd "$RUNNER_TEMP" && rustup --version 2>/dev/null | awk 'NR==1 {print $2}') toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml) upstream=$UPSTREAM@$(git rev-parse HEAD)"
+      # upstream's step is the `rustup target add` alone; rustup then installs 1.96.1 implicitly with the file's default
+      # profile. The install is made explicit and minimal here (same toolchain, no rust-docs), then upstream's command.
+      - name: Setup Rust Toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          rustup target add x86_64-unknown-linux-gnu
+          rustc --version && cargo --version
+      - name: cargo fmt
+        run: |
+          rustup component add rustfmt
+          cargo fmt --all --check
+      - name: cargo clippy
+        run: |
+          rustup component add clippy
+          cargo --config "$GITHUB_WORKSPACE/.cargo/ci.toml" clippy $MAIN_OPTIONS --profile ci -- $CLIPPY_OPTIONS
+      - name: cargo build
+        run: cargo --config "$GITHUB_WORKSPACE/.cargo/ci.toml" build $MAIN_OPTIONS --profile ci
+      - name: cargo test
+        run: cargo --config "$GITHUB_WORKSPACE/.cargo/ci.toml" test $MAIN_OPTIONS --profile ci
+      - name: cargo test --doc
+        run: cargo --config "$GITHUB_WORKSPACE/.cargo/ci.toml" test --workspace --doc --profile ci
+      - name: Assert Clean Repo
+        run: git diff --quiet && git diff --cached --quiet
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          { rustc --version; cargo --version; cargo clippy --version; cargo fmt --version; echo; target/ci/nu --version; } > "$RUNNER_TEMP/evidence/versions.txt" 2>&1 || true
+          ls -l target/ci/nu target/ci/nu_plugin_* > "$RUNNER_TEMP/evidence/binaries.txt" 2>&1 || true
+          git status --porcelain > "$RUNNER_TEMP/evidence/git-status.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-nushell-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

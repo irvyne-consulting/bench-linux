@@ -1,0 +1,156 @@
+# ICR benchmark — uv (Rust, 75-crate workspace): astral-sh/uv's own "cargo test on linux" job (test.yml) from a clean checkout
+# of the pinned upstream commit, on GitHub-hosted and ICR runners: mold by upstream's checksum-verified script, Rust 1.98.1
+# from rust-toolchain.toml, uv 0.12.13 downloaded with upstream's own SHA-256 pin (in place of the setup-uv action), the nine
+# test Pythons, gnome-keyring, btrfs/tmpfs/minix test filesystems, then `cargo nextest run` with upstream's flags and profile.
+# Edits: Swatinem/rust-cache dropped (cold by design), depot's apt mirror lines replaced by `apt-get update`, the test binaries
+# built in a separate `--no-run` step so compile and test time are read apart. Only Irvyne starts a run. Evidence uploaded.
+name: uv
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: astral-sh/uv
+  UPSTREAM_REF: 220b3eea7eba1628149c0bf6b880d30f19f678d5   # main, 2026-09-19
+  # upstream's test.yml env, unchanged
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+  PYTHON_VERSION: "3.12"
+  RUSTC_BOOTSTRAP: 1
+  RUSTUP_MAX_RETRIES: 10
+  UV_LOCKED: 1
+  # upstream's astral-sh/setup-uv pin: the version and the SHA-256 it verifies (uv-x86_64-unknown-linux-gnu.tar.gz)
+  UV_VERSION: "0.12.13"
+  UV_SHA256: 745765a3b6e360ad76743599ae5c42e9278c7edf8bbff9fc76d05bf2623a04dd
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: astral-sh/uv
+          ref: 220b3eea7eba1628149c0bf6b880d30f19f678d5
+          persist-credentials: false
+      # rustup is asked for its version from $RUNNER_TEMP: in the checkout it would resolve rust-toolchain.toml and install
+      # the toolchain in this step instead of the next one
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; export PATH="$HOME/.cargo/bin:$PATH"
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) mem=$(free -g | awk '/Mem/ {print $2}')G kernel=$(uname -r) os=$(. /etc/os-release && echo "$PRETTY_NAME") rustup=$(cd "$RUNNER_TEMP" && rustup --version 2>/dev/null | awk 'NR==1 {print $2}') toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml) python3=$(python3 --version | awk '{print $2}') upstream=$UPSTREAM@$(git rev-parse HEAD)"
+      # upstream's script: mold 2.40.4 from GitHub, SHA-256 checked, installed to /usr/local and made the default ld (sudo)
+      - name: Install mold
+        run: ./scripts/install-mold.sh
+      # rust-toolchain.toml names 1.98.1; upstream's command
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install --profile minimal
+          rustc --version && cargo --version
+      # upstream's setup-uv step by hand: the same release archive, checked against the same SHA-256, no cache
+      - name: Install uv
+        run: |
+          curl -fsSLo "$RUNNER_TEMP/uv.tar.gz" "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz"
+          echo "$UV_SHA256  $RUNNER_TEMP/uv.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/uv-bin" && tar -xzf "$RUNNER_TEMP/uv.tar.gz" -C "$RUNNER_TEMP/uv-bin" --strip-components=1
+          echo "$RUNNER_TEMP/uv-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/uv-bin/uv" --version
+      # the versions in .python-versions (3.8 to 3.14, two 3.13/3.14 variants), from python-build-standalone on GitHub
+      - name: Install required Python versions
+        run: uv python install
+      # upstream reads a depot-only mirror list and sets apt retry options here; both legs run a plain update instead
+      - name: Install secret service
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gnome-keyring
+      # upstream: a login keyring created and unlocked with a throwaway password, needed by the secret-service tests
+      - name: Start gnome-keyring
+        run: gnome-keyring-daemon --components=secrets --daemonize --unlock <<< 'foobar'
+      - name: Create btrfs filesystem
+        run: |
+          sudo apt-get install -y btrfs-progs
+          truncate -s 1G /tmp/btrfs.img
+          mkfs.btrfs /tmp/btrfs.img
+          sudo mkdir /btrfs
+          sudo mount -o loop /tmp/btrfs.img /btrfs
+          sudo chown "$(id -u):$(id -g)" /btrfs
+      - name: Create tmpfs filesystem
+        run: |
+          sudo mkdir /tmpfs
+          sudo mount -t tmpfs -o size=256m tmpfs /tmpfs
+          sudo chown "$(id -u):$(id -g)" /tmpfs
+      - name: Create minix filesystem (low hardlink limit)
+        run: |
+          truncate -s 16M /tmp/minix.img
+          mkfs.minix /tmp/minix.img
+          sudo mkdir /minix
+          sudo mount -o loop /tmp/minix.img /minix
+          sudo chown "$(id -u):$(id -g)" /minix
+      # upstream builds and runs in one command; the build is taken out first so that compile time and test time are read
+      # apart — the next step, upstream's command unchanged, finds everything fresh (checksum freshness) and builds nothing
+      - name: Build test binaries (cargo nextest run --no-run)
+        run: |
+          uv run --only-dev cargo nextest run --no-run \
+            --cargo-profile fast-build-nightly \
+            -Z panic-abort-tests \
+            -Z checksum-freshness \
+            --features test-python-patch,test-universal,native-auth,secret-service \
+            --workspace \
+            --profile ci-linux
+      # upstream's step and env (CARGO_UNSTABLE_MTIME_ON_USE, a rust-cache detail, dropped); the ci-linux nextest profile
+      # runs 20 tests at a time and writes target/nextest/ci-linux/junit.xml
+      - name: Cargo test
+        env:
+          UV_HTTP_RETRIES: 5
+          RUST_BACKTRACE: 1
+          UV_INTERNAL__TEST_COW_FS: /btrfs
+          UV_INTERNAL__TEST_NOCOW_FS: /tmpfs
+          UV_INTERNAL__TEST_ALT_FS: /tmpfs
+          UV_INTERNAL__TEST_LOWLINKS_FS: /minix
+          INSTA_UPDATE: new
+          INSTA_PENDING_DIR: ${{ github.workspace }}/pending-snapshots
+        run: |
+          uv run --only-dev cargo nextest run \
+            --cargo-profile fast-build-nightly \
+            -Z panic-abort-tests \
+            -Z checksum-freshness \
+            --features test-python-patch,test-universal,native-auth,secret-service \
+            --workspace \
+            --profile ci-linux
+      - name: Evidence
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp target/nextest/ci*/junit.xml "$RUNNER_TEMP/evidence/" 2>/dev/null || true
+          { [ -d pending-snapshots ] && cp -r pending-snapshots "$RUNNER_TEMP/evidence/"; } || true
+          { rustc --version; cargo --version; uv --version; mold --version | head -1; uv run --only-dev cargo nextest --version 2>/dev/null | head -1; echo; uv python list --only-installed; } > "$RUNNER_TEMP/evidence/versions.txt" 2>&1 || true
+          uv pip list --python .venv > "$RUNNER_TEMP/evidence/dev-tools.txt" 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-uv-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 90

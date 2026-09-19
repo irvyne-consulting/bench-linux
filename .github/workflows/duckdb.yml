@@ -1,0 +1,160 @@
+# ICR benchmark — duckdb (C++, CMake + Ninja): duckdb/duckdb's own Main.yml job "Linux Release (amd64 compatibility)" —
+# `make release` with the Linux release extension set, jemalloc and benchmarks, no LTO, clang from upstream's manylinux_2_28
+# CI image (pinned by digest, so every leg builds with the same toolchain), then upstream's smoke tests, symbol checks, CLI,
+# build-flag and gcc library checks — from a clean checkout of the pinned commit. Edits: the duckdb-ci composite actions
+# written out as steps, lukka/run-vcpkg replaced by git + vcpkg's SHA-512-verified bootstrap, ccache and the vcpkg binary
+# cache dropped, deploys skipped; the follow-up "Linux Release Tests" job (allunit) is not run. Only Irvyne starts a run.
+name: duckdb
+
+on:
+  workflow_dispatch:
+    inputs:
+      legs:
+        description: JSON list of runner labels to measure (the legs of one project run together)
+        default: '["ubuntu-latest", "ubuntu-26.04", "icr-2c", "icr-4c", "icr-8c"]'
+        type: string
+      note:
+        description: free text echoed in the run (campaign, block, host condition)
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM: duckdb/duckdb
+  UPSTREAM_REF: 3a604ab6d4d66910ad91bf7669c0b5f648a00190   # v2.0-cyanoptera, 2026-09-19
+  # upstream's linux-release job env for the "amd64 compatibility" cell (scripts/ci/job_stages.py, compatibility_release_config:
+  # extension_config linux_release_extensions.cmake, build_jemalloc 1, lto and extra_cmake_variables empty)
+  GEN: ninja
+  EXTENSION_CONFIGS: ${{ github.workspace }}/.github/config/linux_release_extensions.cmake
+  ENABLE_EXTENSION_AUTOLOADING: 1
+  ENABLE_EXTENSION_AUTOINSTALL: 1
+  BUILD_BENCHMARK: 1
+  BUILD_JEMALLOC: 1
+  FORCE_WARN_UNUSED: 1
+  SMOKE_RUNNER: build/release/test/run
+  VCPKG_COMMIT: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3   # upstream's vcpkg pin, release 2026.06.24
+
+jobs:
+  bench:
+    name: ${{ matrix.leg }}
+    runs-on: ${{ matrix.leg }}
+    environment: icr-bench
+    timeout-minutes: 240
+    # upstream's job container for this cell (images.manylinux_amd64_main at scripts/ci/image_version.txt 20260910-2fc90925),
+    # pinned by digest; it ships clang, cmake, ninja, gcc-toolset-14 and vcpkg at /vcpkg, and runs as root
+    container:
+      image: ghcr.io/duckdb/duckdb-ci/manylinux_2_28_amd64_main:20260910-2fc90925@sha256:be3a1ab980091c9267feee386ac89ea94ca9d571c7302e662213e22e4f36565f
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(inputs.legs) }}
+    steps:
+      - name: Checkout upstream at the pinned commit
+        uses: actions/checkout@v7
+        with:
+          repository: duckdb/duckdb
+          ref: 3a604ab6d4d66910ad91bf7669c0b5f648a00190
+          persist-credentials: false
+      # safe.directory as in upstream's checkout action; build_jobs is the Makefile's rule (80 % of the cpus, at least 1)
+      - name: Runner facts
+        env:
+          LEG: ${{ matrix.leg }}
+          NOTE: ${{ inputs.note }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p evidence
+          echo "leg=$LEG note=$NOTE runner=$RUNNER_NAME cpus=$(nproc) build_jobs=$(( $(nproc) * 80 / 100 )) mem=$(awk '/MemTotal/ {printf "%d", $2/1048576}' /proc/meminfo)G host_kernel=$(uname -r) container=$(. /etc/os-release && echo "$PRETTY_NAME") clang=$(clang --version | awk 'NR==1 {print $3}') cmake=$(cmake --version | awk 'NR==1 {print $3}') ninja=$(ninja --version) python3=$(python3 --version | awk '{print $2}') upstream=$UPSTREAM@$(git rev-parse HEAD)"
+          { echo "leg: $LEG"; echo "host kernel: $(uname -r)"; echo "container: $(. /etc/os-release && echo "$PRETTY_NAME")"; echo "cpus: $(nproc)"; echo "build jobs (Makefile, 80 % of the cpus): $(( $(nproc) * 80 / 100 ))"; clang --version | head -1; cmake --version | head -1; echo "ninja $(ninja --version)"; python3 --version; gcc --version | head -1; } > evidence/versions.txt
+      # upstream's prepare job computes these for every other job (scripts/ci/version.py: v<release>.0-dev<commit count>);
+      # a shallow checkout counts one commit, so the dev iteration reads 1 here
+      - name: Resolve DuckDB version and commit
+        run: |
+          commit=$(git rev-parse HEAD)
+          version=$(python3 scripts/ci/version.py --duckdb-commit "$commit")
+          { echo "DUCKDB_COMMIT=$commit"; echo "DUCKDB_VERSION=$version"; } >> "$GITHUB_ENV"
+          echo "duckdb_commit=$commit duckdb_version=$version"
+      # upstream's duckdb-ci/build-duckdb composite action, written out. vcpkg: the image's copy at $VCPKG_ROOT is used as is
+      # when its marker names upstream's pinned commit; otherwise it is fetched at that commit and bootstrapped by vcpkg's own
+      # script (SHA-512-verified tool download) in place of lukka/run-vcpkg. The binary cache starts empty (no actions/cache).
+      - name: Setup vcpkg
+        run: |
+          vcpkg_root="${VCPKG_ROOT:-$GITHUB_WORKSPACE/vcpkg}"
+          if [ "$(cat "$vcpkg_root/vcpkgLastBuiltCommitId" 2>/dev/null)" = "$VCPKG_COMMIT" ]; then
+            echo "vcpkg in $vcpkg_root already built at $VCPKG_COMMIT"
+          else
+            mkdir -p "$vcpkg_root"
+            [ -d "$vcpkg_root/.git" ] || git -C "$vcpkg_root" init -q
+            git -C "$vcpkg_root" fetch --depth 1 https://github.com/microsoft/vcpkg.git "$VCPKG_COMMIT"
+            git -C "$vcpkg_root" reset -q --hard FETCH_HEAD
+            "$vcpkg_root/bootstrap-vcpkg.sh" -disableMetrics
+            echo "$VCPKG_COMMIT" > "$vcpkg_root/vcpkgLastBuiltCommitId"
+          fi
+          "$vcpkg_root/vcpkg" version | head -1
+          mkdir -p "$GITHUB_WORKSPACE/vcpkg-cache"
+          {
+            echo "VCPKG_ROOT=$vcpkg_root"
+            echo "VCPKG_TOOLCHAIN_PATH=$vcpkg_root/scripts/buildsystems/vcpkg.cmake"
+            echo "VCPKG_DEFAULT_BINARY_CACHE=$GITHUB_WORKSPACE/vcpkg-cache"
+            echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg-cache,readwrite"
+            echo "USE_MERGED_VCPKG_MANIFEST=1"
+          } >> "$GITHUB_ENV"
+      # a pinned commit changes no tests: the list is empty, as on an upstream push without test changes
+      - name: Write changed tests file
+        run: |
+          : > "$RUNNER_TEMP/changed_tests.txt"
+      # the measured build, upstream's command (retry.py re-runs make after a non-zero exit, as upstream does); the Makefile
+      # runs 80 % of the cpus as parallel jobs and pulls the out-of-tree extensions (fts, inet, httpfs) at their pinned commits
+      - name: Build DuckDB (make release)
+        run: python3 scripts/ci/retry.py -- make release
+      # upstream's `test` input of the composite action: the smoke list (test/smoke_tests.list) through build/release/test/run
+      - name: Smoke tests (make smoke)
+        shell: bash
+        run: make smoke T="--changed-tests=$RUNNER_TEMP/changed_tests.txt" 2>&1 | tee evidence/smoke.log
+      - name: Symbol Checks
+        run: make -j4 --output-sync=target symbol-checks
+      - name: CLI check
+        run: ./build/release/duckdb -c "PRAGMA platform; PRAGMA version;"
+      - name: Verify build flags
+        run: |
+          grep -Fq -- '-march=x86-64-v3' build/release/compile_commands.json
+          grep -Fq -- '-mtune=generic' build/release/compile_commands.json
+          if grep -Fq -- '-flto' build/release/compile_commands.json; then
+            echo "Compatibility build unexpectedly contains LTO flags" >&2
+            exit 1
+          fi
+      - name: GCC static library compatibility
+        run: |
+          gcc -std=c11 \
+            -Isrc/include \
+            examples/embedded-c/main.c \
+            build/release/src/libduckdb_static.a \
+            build/release/extension/libdummy_static_extension_loader.a \
+            -ldl -lpthread -lm -lstdc++ \
+            -o build/release/gcc-static-library-smoke
+          build/release/gcc-static-library-smoke
+      - name: GCC shared library compatibility
+        run: |
+          gcc -std=c11 \
+            -Isrc/include \
+            examples/embedded-c/main.c \
+            -Lbuild/release/src \
+            -Wl,-rpath,"$PWD/build/release/src" \
+            -lduckdb \
+            -o build/release/gcc-shared-library-smoke
+          build/release/gcc-shared-library-smoke
+      - name: Evidence
+        if: always()
+        run: |
+          ./build/release/duckdb -c "PRAGMA platform; PRAGMA version;" > evidence/duckdb-version.txt 2>&1 || true
+          cp build/extension_configuration/vcpkg.json evidence/ 2>/dev/null || true
+          ls -l build/release/extension/*/*.duckdb_extension > evidence/extensions.txt 2>&1 || true
+          ls "$VCPKG_DEFAULT_BINARY_CACHE" > evidence/vcpkg-binary-cache.txt 2>&1 || true
+          { "$VCPKG_ROOT/vcpkg" version | head -1; echo "vcpkg commit: $(cat "$VCPKG_ROOT/vcpkgLastBuiltCommitId" 2>/dev/null)"; echo "DUCKDB_VERSION=$DUCKDB_VERSION DUCKDB_COMMIT=$DUCKDB_COMMIT"; } >> evidence/versions.txt 2>&1 || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: evidence-duckdb-${{ matrix.leg }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 90

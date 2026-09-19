@@ -35,6 +35,9 @@ every leg builds inside the same toolchain image pinned by digest.
 | `hono.yml` | honojs/hono `098e119` (4.13.8) | upstream's `Main` job (Node 24.7 + Bun 1.2.19 from `.tool-versions`: install, format, lint, editorconfig, build, tsc + vitest) and its `Bun` job as a second job — TypeScript |
 | `fastify.yml` | fastify/fastify `630acd0` (6.0.0-alpha.4) | `npm install --ignore-scripts`, `npm run unit` (borp) on Node 24 — Node.js |
 | `hugo.yml` | gohugoio/hugo `51cd9e6` | upstream's toolchain (Go 1.27, Node 22, asciidoctor gems, pandoc, dart-sass, mage), then `mage -v hugo` and `go test -tags extended,withdeploy ./...` — the 60-minute upstream job without staticcheck, the race loop and the cross-build — Go |
+| `uv.yml` | astral-sh/uv `220b3ee` | upstream's `cargo test on linux` job in full: mold, Rust 1.98.1, uv 0.12.13 (SHA-256 pinned), nine test Pythons, then `cargo nextest run` with upstream's profile, build and tests read apart — large Rust workspace |
+| `nushell.yml` | nushell/nushell `de33b54` | upstream's `cargo` job, root workspace on Ubuntu: fmt check, clippy, build, tests, doc tests with upstream's ci profile, Rust 1.96.1 — Rust application |
+| `duckdb.yml` | duckdb/duckdb `3a604ab` (v2.0-cyanoptera) | upstream's `linux-release` job (amd64 compatibility cell) inside upstream's manylinux CI image pinned by digest: `make release` with the release extensions and jemalloc, smoke tests, symbol and library checks; vcpkg bootstrapped, no ccache — C++, toolchain identical on every leg by construction |
 
 ## Results
 Pilots of 2026-09-19 (one or two attempts each, quiet node — the campaigns with more attempts follow):
