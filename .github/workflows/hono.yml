@@ -58,6 +58,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .tool-versions
+          no-cache: true   # cold by design; a cache restored from a GitHub-hosted leg left the ICR legs without a binary
       - name: Toolchain
         run: bun --version && node --version
       - name: bun install --frozen-lockfile
@@ -113,6 +114,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .tool-versions
+          no-cache: true   # cold by design; a cache restored from a GitHub-hosted leg left the ICR legs without a binary
       - name: Toolchain
         run: bun --version && node --version
       - name: bun install --frozen-lockfile
