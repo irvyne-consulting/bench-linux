@@ -15,8 +15,9 @@ Legs: GitHub-hosted `ubuntu-latest` and `ubuntu-26.04` (4 vCPU / 16 GB on a publ
 [ICR](https://www.irvyne.eu/icr/) (Irvyne Consulting Runners) `icr-2c`, `icr-4c`, `icr-8c` (2 / 4 / 8 vCPU with
 8 / 16 / 32 GiB, one fresh virtual machine per job, destroyed afterwards).
 
-Every step is timed by GitHub itself and read from its API by the publisher; each job uploads its evidence (`config`,
-`versions.txt`, `packages.txt`, GNU `time -v` output with elapsed time and peak memory) as a run artifact. Several runs
+Every step is timed by GitHub itself and read from its API by the publisher (the steps are written out in each job:
+a composite action would collapse them into one); each job uploads its evidence (`config`, `versions.txt`,
+`packages.txt`, `build.log`, GNU `time -v` output with elapsed time and peak memory) as a run artifact. Several runs
 per leg, on a quiet host and under a declared concurrent load; medians and observed maxima are published with the sample
 size, every number linking to its run.
 
