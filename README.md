@@ -91,6 +91,20 @@ approval and the runner start, every run: 2–10 s on GitHub, 19–22 s on ICR (
 ICR installs PHP 8.4 (about 20 s) that GitHub's image already contains; the PHPUnit suite is mostly single-threaded, so
 the ICR sizes barely differ from each other.
 
+### Long builds — one attempt per leg, 2026-09-20, quiet host (seconds)
+
+The builds a team waits an hour or more for on GitHub's standard runner. `icr-2c` was left out (two threads for a
+multi-hour compile). Build step, then execution in brackets.
+
+| build | `ubuntu-latest`, 4 vCPU, gcc 13 | `ubuntu-26.04`, 4 vCPU, gcc 15 | `icr-4c` | `icr-8c` | run |
+|---|---|---|---|---|---|
+| Linux kernel 7.2.6 `allmodconfig` (WERROR and debug info off), `make -j$(nproc) bzImage modules` | **9522** (9556) — 2 h 39 min | **7589** (7633) — 2 h 06 min | **3428** (3452) — 57 min | **1765** (1788) — 29 min | [35484786278](https://github.com/irvyne-consulting/icr-bench/actions/runs/35484786278) |
+| Clang, Release, X86 only, CMake + Ninja, two link jobs (`ninja clang`); checkout of the LLVM tree 47–62 s on every leg | **4282** (4375) — 71 min | **4576** (4664) — 76 min | **1669** (1741) — 28 min | **859** (927) — 14 min | [35491617154](https://github.com/irvyne-consulting/icr-bench/actions/runs/35491617154) |
+
+On these, four ICR vCPUs finish in a little over a third of GitHub's four (Clang 2.6×, the full kernel 2.8×), and the
+8 vCPU runner in a fifth (Clang 5.0×, kernel 5.4×): a kernel that takes GitHub's runner the whole morning is done on
+`icr-8c` in half an hour. Hugo's full upstream check (`mage -v check`) failed on every leg and is being looked at.
+
 ### First pilots — one attempt per leg, 2026-09-19/20 (execution, seconds)
 
 | project | `ubuntu-latest` | `ubuntu-26.04` | `icr-2c` | `icr-4c` | `icr-8c` | run |
@@ -115,7 +129,7 @@ one build per CPU ran 76 package builds out of memory on the 16 GiB legs, upstre
 `codegen` package is left out (it panics outside mage); **mastodon** — `charlock_holmes` needs `zlib1g-dev`, present on
 GitHub's image and not on ours, and the test job's `PAM_ENABLED` had leaked into the production asset step. **seed4j**
 passes on four legs per run and fails one Cypress component test (`Patch.spec.ts`) on a different leg each time: an
-upstream flake, kept as is and stated. Long builds (kernel `allmodconfig`, Clang, hugo full) are running.
+upstream flake, kept as is and stated.
 
 Reading, with the sample sizes above in mind: the compiled projects scale with the cores and with ICR's faster ones
 (kernel, ripgrep, nushell, duckdb, gitea); test suites bound by a single thread or by service round trips gain less
