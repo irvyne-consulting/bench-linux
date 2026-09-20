@@ -110,7 +110,7 @@ jobs:
           # filesystem skip when the directory is absent, so a kernel without it does not fail the leg
           truncate -s 16M /tmp/minix.img && mkfs.minix /tmp/minix.img
           if sudo modprobe minix 2>/dev/null || grep -qw minix /proc/filesystems; then
-            sudo mkdir -p /minix && sudo mount -o loop /tmp/minix.img /minix && sudo chown "$(id -u):$(id -g)" /minix && echo "minix mounted"
+            sudo mkdir -p /minix && sudo mount -o loop /tmp/minix.img /minix && sudo chown "$(id -u):$(id -g)" /minix && echo "UV_INTERNAL__TEST_LOWLINKS_FS=/minix" >> "$GITHUB_ENV" && echo "minix mounted"
           else
             echo "minix filesystem unavailable on this kernel; the low-hardlink tests will skip"
           fi
@@ -134,7 +134,8 @@ jobs:
           UV_INTERNAL__TEST_COW_FS: /btrfs
           UV_INTERNAL__TEST_NOCOW_FS: /tmpfs
           UV_INTERNAL__TEST_ALT_FS: /tmpfs
-          UV_INTERNAL__TEST_LOWLINKS_FS: /minix
+          # UV_INTERNAL__TEST_LOWLINKS_FS is set by the minix step only where the filesystem mounted (the hardlink test does
+          # not skip on a missing directory: it failed on GitHub's 24.04, whose kernel has no minix module)
           INSTA_UPDATE: new
           INSTA_PENDING_DIR: ${{ github.workspace }}/pending-snapshots
         run: |
