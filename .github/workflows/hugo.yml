@@ -107,7 +107,7 @@ jobs:
           echo "${DART_SASS_SHA_LINUX}  dart-sass-${SASS_VERSION}-linux-x64.tar.gz" | sha256sum -c;
           tar -xvf "dart-sass-${SASS_VERSION}-linux-x64.tar.gz";
           echo "$GOBIN"
-          echo "$GITHUB_WORKSPACE/dart-sass/" >> $GITHUB_PATH
+          echo "$PWD/dart-sass/" >> "$GITHUB_PATH"   # extracted in the working directory (hugo/), not the workspace root
       - name: Toolchain facts
         run: |
           go version; go env GOROOT CGO_ENABLED; node --version; ruby --version; asciidoctor --version | head -1; pandoc -v | head -1; rst2html --version; sass --version; mage -version; gcc --version | head -1
@@ -128,8 +128,14 @@ jobs:
         if: inputs.mode == 'bounded'
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-                    # -p 2 is what upstream's CI loop uses; the default (one build per CPU) ran 76 package builds out of memory on the 16 GiB legs
-          go test -json -p 2 -tags extended,withdeploy ./... > "$RUNNER_TEMP/evidence/go-test.json"
+                    # upstream's CI form, package by package with -p 2 (mage's TestRace loop, without -race here): one `go test ./...`
+          # over the whole module kept every test binary and object in $WORK until the end and filled the disk on the 16 GiB
+          # legs ("no space left on device" on ICR, "disk quota exceeded" on GitHub's 26.04 image)
+          rc=0
+          for pkg in $(go list ./...); do
+            go test -json -p 2 -tags extended,withdeploy "$pkg" >> "$RUNNER_TEMP/evidence/go-test.json" || rc=1
+          done
+          exit $rc
       - name: Evidence
         if: always()
         run: |
