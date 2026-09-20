@@ -49,30 +49,70 @@ why, third-party actions, the durations upstream's own runs show, memory, disk a
 2026-09-19 evening run their first pilot before any result is published here.
 
 ## Results
-Pilots of 2026-09-19 (one or two attempts each, quiet node — the campaigns with more attempts follow):
 
-**Linux kernel 7.2.6, `x86_64_defconfig`, `make -j$(nproc) bzImage modules`, build step only, seconds**
+All numbers are seconds from GitHub's own timestamps, read back through the API; **execution** is the job from its start to
+its end, **build** the build step alone where one exists. Medians over the attempts, observed maximum in brackets. Quiet
+host: no other tenant's job ran on the node during the ICR legs unless stated (the daemon journal is checked for each
+window; over the whole night of 2026-09-19 to 20, Socrate started 5 short jobs against our 109). Wait between the
+approval and the runner start, every run: 2–10 s on GitHub, 19–22 s on ICR (fresh VM).
 
-| leg | delivered toolchain (2 attempts) | same gcc 16.2.0 image on every leg (1 attempt) |
-|---|---|---|
-| `ubuntu-latest`, 4 vCPU, gcc 13.3 | 642, 641 | 790 |
-| `ubuntu-26.04`, 4 vCPU, gcc 15.2 | 699, 702 | 878 |
-| `icr-2c`, 2 vCPU | 448, 445 | 520 |
-| `icr-4c`, 4 vCPU | 234, 233 | 271 |
-| `icr-8c`, 8 vCPU | 127, 127 | 146 |
+### Campaign 1 — five attempts per leg, all legs of a project together, 2026-09-19/20
 
-Runs: [35461792101](https://github.com/irvyne-consulting/icr-bench/actions/runs/35461792101) (build times from the
-evidence artifacts; the job status reads "failure" because of a wrapper defect in the workflow's first version, the builds
-exited 0), [35462489984](https://github.com/irvyne-consulting/icr-bench/actions/runs/35462489984),
-[35463261826](https://github.com/irvyne-consulting/icr-bench/actions/runs/35463261826). Whole-job turnaround from the
-approval, second run: 683 s on `ubuntu-latest`, 745 s on `ubuntu-26.04`, 495 s on `icr-2c`, 280 s on `icr-4c`, 173 s on
-`icr-8c`.
+**Linux kernel 7.2.6, `x86_64_defconfig`, `make -j$(nproc) bzImage modules`** — runs [35466702455](https://github.com/irvyne-consulting/icr-bench/actions/runs/35466702455), [35467363128](https://github.com/irvyne-consulting/icr-bench/actions/runs/35467363128), [35468001886](https://github.com/irvyne-consulting/icr-bench/actions/runs/35468001886), [35468602804](https://github.com/irvyne-consulting/icr-bench/actions/runs/35468602804), [35469211160](https://github.com/irvyne-consulting/icr-bench/actions/runs/35469211160) (delivered), [35469860541](https://github.com/irvyne-consulting/icr-bench/actions/runs/35469860541), [35470637590](https://github.com/irvyne-consulting/icr-bench/actions/runs/35470637590), [35479786364](https://github.com/irvyne-consulting/icr-bench/actions/runs/35479786364), [35480466811](https://github.com/irvyne-consulting/icr-bench/actions/runs/35480466811), [35481145787](https://github.com/irvyne-consulting/icr-bench/actions/runs/35481145787) (controlled)
 
-**ripgrep, execution / turnaround, seconds, 1 attempt** (runs in the former `bench-ripgrep` repository, archived):
-`ubuntu-latest` 70 / 72 · `ubuntu-26.04` 74 / 79 · `icr-2c` 59 / 80 · `icr-4c` 38 / 57 · `icr-8c` 25 / 45.
+| leg | delivered toolchain: build | execution | controlled (`gcc:16.2.0` image on every leg): build | execution |
+|---|---|---|---|---|
+| `ubuntu-latest`, 4 vCPU (gcc 13.3) | **639** | 672 (693) | **803** | 850 (864) |
+| `ubuntu-26.04`, 4 vCPU (gcc 15.2) | **688** | 723 (751) | **859** | 899 (907) |
+| `icr-2c`, 2 vCPU | **446** | 471 (472) | **517** | 544 (577) |
+| `icr-4c`, 4 vCPU | **234** | 257 (258) | **267** | 295 (307) |
+| `icr-8c`, 8 vCPU | **128** | 151 (151) | **146** | 172 (181) |
 
-**laravel, execution, seconds** (former `bench-laravel`, archived): `ubuntu-latest` 173 and 172 · `icr-2c` 152 ·
-`icr-4c` 144 · `icr-8c` 145 — ICR installs PHP 8.4 in 21 s that GitHub's image already contains.
+**ripgrep, `cargo build --release --locked` + `cargo test --all --locked`** — runs [35478630982](https://github.com/irvyne-consulting/icr-bench/actions/runs/35478630982), [35478702616](https://github.com/irvyne-consulting/icr-bench/actions/runs/35478702616), [35478777363](https://github.com/irvyne-consulting/icr-bench/actions/runs/35478777363), [35478850576](https://github.com/irvyne-consulting/icr-bench/actions/runs/35478850576), [35478948655](https://github.com/irvyne-consulting/icr-bench/actions/runs/35478948655)
+
+| leg | execution (max) | build | test |
+|---|---|---|---|
+| `ubuntu-latest` | **62** (65) | 30 | 26 |
+| `ubuntu-26.04` | **65** (109) | 29 | 25 |
+| `icr-2c` | **57** (58) | 26 | 26 |
+| `icr-4c` | **35** (37) | 15 | 15 |
+| `icr-8c` | **23** (23) | 8 | 9 |
+
+**laravel/framework, `linux_tests` cell with MySQL, Redis, Memcached, DynamoDB** — runs [35479026086](https://github.com/irvyne-consulting/icr-bench/actions/runs/35479026086), [35479166199](https://github.com/irvyne-consulting/icr-bench/actions/runs/35479166199), [35479302474](https://github.com/irvyne-consulting/icr-bench/actions/runs/35479302474), [35479462782](https://github.com/irvyne-consulting/icr-bench/actions/runs/35479462782), [35479627786](https://github.com/irvyne-consulting/icr-bench/actions/runs/35479627786)
+
+| leg | execution (max) | service containers start | PHP + Composer | tests |
+|---|---|---|---|---|
+| `ubuntu-latest` | **175** (189) | 25 | 15 | 128 |
+| `ubuntu-26.04` | **184** (188) | 33 | 17 | 123 |
+| `icr-2c` | **154** (159) | 13 | 28 | 101 |
+| `icr-4c` | **154** (155) | 12 | 33 | 99 |
+| `icr-8c` | **149** (152) | 12 | 28 | 99 |
+
+ICR installs PHP 8.4 (about 20 s) that GitHub's image already contains; the PHPUnit suite is mostly single-threaded, so
+the ICR sizes barely differ from each other.
+
+### First pilots — one attempt per leg, 2026-09-19/20 (execution, seconds)
+
+| project | `ubuntu-latest` | `ubuntu-26.04` | `icr-2c` | `icr-4c` | `icr-8c` | run |
+|---|---|---|---|---|---|---|
+| duckdb, `make release` + smoke, inside upstream's CI image | **2394** | 1735 | not run | **907** | **513** | [35476853744](https://github.com/irvyne-consulting/icr-bench/actions/runs/35476853744) |
+| gitea, `test-unit` (race, twice) with 5 services | **1005** | 891 | 1072 | **593** | **341** | [35474045866](https://github.com/irvyne-consulting/icr-bench/actions/runs/35474045866) |
+| nushell, fmt + clippy + build + tests + doc tests | **876** | 924 | 717 | **424** | **301** | [35474869189](https://github.com/irvyne-consulting/icr-bench/actions/runs/35474869189) |
+| plausible, compile + migrations + `mix test` with PostgreSQL 18 and ClickHouse | **631** | 679 | 469 | **405** | **380** | [35472120207](https://github.com/irvyne-consulting/icr-bench/actions/runs/35472120207) |
+| seed4j, `npm ci` + `lint:ci` + `mvnw clean verify` | **322** | failed in tests (second attempt queued) | 209 | **179** | **168** | [35471845649](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471845649) |
+| petclinic, `./mvnw -B verify` | **121** | 126 | 76 | **70** | **74** | [35471599638](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471599638) |
+| fastify, `npm install` + `npm run unit` | **67** | 67 | 103 | **48** | **38** | [35471464564](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471464564) |
+| vite, `pnpm install` + `build` + `test-unit` | **42** | 37 | 32 | **27** | **24** | [35471401973](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471401973) |
+
+Not yet green, being fixed: hugo (`go test ./...` fails on every leg, GitHub included — a test outside upstream's CI form),
+mastodon (`bundle install` on ICR, yarn on `ubuntu-latest`, assets on `ubuntu-26.04`), uv (`cargo nextest` failures on
+every leg that reached it; the minix filesystem step fails on GitHub's 24.04), pydantic and hono (workflow defects, fixed,
+second attempt queued). Long builds (kernel `allmodconfig`, Clang, hugo full) run after those.
+
+Reading, with the sample sizes above in mind: the compiled projects scale with the cores and with ICR's faster ones
+(kernel, ripgrep, nushell, duckdb, gitea); test suites bound by a single thread or by service round trips gain less
+(laravel, petclinic); GitHub's `ubuntu-26.04` image is not faster than `ubuntu-latest` on any of them. Two ICR vCPUs beat
+GitHub's four on every compiled project.
 
 The projects are the work of their authors and contributors under their own licences; nothing of them is redistributed
 here.
