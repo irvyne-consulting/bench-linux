@@ -117,11 +117,16 @@ On these, four ICR vCPUs finish in a little over a third of GitHub's four (Clang
 | petclinic, `./mvnw -B verify` | **121** | 126 | 76 | **70** | **74** | [35471599638](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471599638) |
 | fastify, `npm install` + `npm run unit` | **67** | 67 | 103 | **48** | **38** | [35471464564](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471464564) |
 | vite, `pnpm install` + `build` + `test-unit` | **42** | 37 | 32 | **27** | **24** | [35471401973](https://github.com/irvyne-consulting/icr-bench/actions/runs/35471401973) |
+| mastodon, `bundle install`, assets, `db:setup`, `flatware rspec` (7 701 examples) with PostgreSQL and Redis, third attempt | **933** | 722 | 769 | **347** | 210, one flaky spec (`BackupService … stores them as expected`) | [35496670928](https://github.com/irvyne-consulting/icr-bench/actions/runs/35496670928) |
+| uv, `cargo nextest` over 5 098 tests (keyring features off), third attempt | **1224** | 1563, one flaky free-threaded Python install | 1239, two flaky free-threaded Python installs | **629** | **338** | [35497393681](https://github.com/irvyne-consulting/icr-bench/actions/runs/35497393681) |
+| hugo, bounded (`mage -v hugo` + `go test -p 2 ./...`), third attempt | **1346** | failed (package builds) | failed (package builds) | failed (package builds) | **591** | [35495635686](https://github.com/irvyne-consulting/icr-bench/actions/runs/35495635686) |
 | pydantic, `uv sync` (pydantic-core built with maturin) + `make test`, second attempt | **95** | 125 | 85 | **77** | **73** | [35482147504](https://github.com/irvyne-consulting/icr-bench/actions/runs/35482147504) |
 | hono, upstream's `Main` job (Node + Bun: install, format, lint, build, tsc + vitest), second attempt | **89** | 84 | 77 | **52** | **46** | [35482147505](https://github.com/irvyne-consulting/icr-bench/actions/runs/35482147505) |
 | hono, upstream's `Bun` job (`bun run test:bun`), second attempt | **10** | 13 | 12 | **12** | **11** | same run |
 
-Not yet green, third attempts queued after the long builds: **uv** — 5096 or 5097 of 5098 tests pass on every leg; the
+Third attempts (rows above): **mastodon** is green on four legs, its `icr-8c` leg lost one flaky spec out of 7 701; **uv** is
+green on `ubuntu-latest`, `icr-4c` and `icr-8c`, the two slowest legs lose free-threaded Python install tests to their
+timeouts; **hugo** still fails whole package builds on three legs (under study). History of the fixes: **uv** — 5096 or 5097 of 5098 tests pass on every leg; the
 failures were one test exporting from an `ssh://` git URL (blocked by the runners' egress until SSH was opened for this
 tenant), the hardlink test that needs a minix filesystem (GitHub's 24.04 kernel has none; the variable is now set only
 where it mounted) and two free-threaded Python installs that time out on the slowest legs; **hugo** — `go test ./...` with
