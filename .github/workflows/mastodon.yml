@@ -97,13 +97,13 @@ jobs:
         run: |
           if [ -f /etc/apt/apt-mirrors.txt ]; then sudo sed -i s:azure\.archive\.ubuntu\.com:archive.ubuntu.com:g /etc/apt/apt-mirrors.txt; fi
           sudo apt-get update
-          # upstream's list names libidn11-dev and libvips42, which exist on 24.04 but not on 26.04 (libidn-dev, libvips42t64
+          # upstream's list names libidn11-dev and libvips42, which exist on 24.04 but not on 26.04; zlib1g-dev added for charlock_holmes on the ICR image (libidn-dev, libvips42t64
           # there); the first pilot's ICR legs therefore installed nothing and charlock_holmes could not build. Each of the two
           # is installed under whichever name the release carries; everything else is upstream's list.
           sudo apt-get install --no-install-recommends -y libidn11-dev 2>/dev/null || sudo apt-get install --no-install-recommends -y libidn-dev
           sudo apt-get install --no-install-recommends -y libvips42 2>/dev/null || sudo apt-get install --no-install-recommends -y libvips42t64
           sudo apt-get install --no-install-recommends -y \
-            libicu-dev \
+            libicu-dev zlib1g-dev \
             libheif-plugin-aomdec \
             libheif-plugin-libde265 \
             ffmpeg libpam-dev \
@@ -134,6 +134,9 @@ jobs:
         env:
           RAILS_ENV: production
           BUNDLE_WITH: production
+          # upstream's build job has no PAM; the test job's PAM_ENABLED leaked into this step and the production bundle
+          # (no pam_authentication group) then failed on Devise's usernamefield
+          PAM_ENABLED: "false"
           SECRET_KEY_BASE_DUMMY: 1
       # upstream's `test` job from here on; the RSpec output is also written to a file for the evidence
       - name: Load database schema

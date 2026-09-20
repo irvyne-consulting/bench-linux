@@ -126,7 +126,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/evidence"
           # every package but codegen: its TestMethods panics ("dir must be set to the Hugo root") when run outside mage, on
           # GitHub and ICR alike; it tests the code generator, not the build
-          go test -json -tags extended,withdeploy $(go list ./... | grep -v "/codegen$") > "$RUNNER_TEMP/evidence/go-test.json"
+          # -p 2 is what upstream's CI loop uses; the default (one build per CPU) ran 76 package builds out of memory on the 16 GiB legs
+          go test -json -p 2 -tags extended,withdeploy $(go list ./... | grep -v "/codegen$") > "$RUNNER_TEMP/evidence/go-test.json"
       - name: Evidence
         if: always()
         run: |
