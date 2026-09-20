@@ -131,9 +131,11 @@ jobs:
                     # upstream's CI form, package by package with -p 2 (mage's TestRace loop, without -race here): one `go test ./...`
           # over the whole module kept every test binary and object in $WORK until the end and filled the disk on the 16 GiB
           # legs ("no space left on device" on ICR, "disk quota exceeded" on GitHub's 26.04 image)
-          rc=0
+          rc=0; n=0; total=$(go list ./... | wc -l)
           for pkg in $(go list ./...); do
-            go test -json -p 2 -tags extended,withdeploy "$pkg" >> "$RUNNER_TEMP/evidence/go-test.json" || rc=1
+            n=$((n + 1)); t0=$(date +%s)
+            if go test -json -p 2 -tags extended,withdeploy "$pkg" >> "$RUNNER_TEMP/evidence/go-test.json"; then r=ok; else r=FAIL; rc=1; fi
+            echo "[$n/$total] $r $(( $(date +%s) - t0 ))s ${pkg#github.com/gohugoio/hugo/}"   # progress in the log; the JSON detail is in the evidence
           done
           exit $rc
       - name: Evidence
