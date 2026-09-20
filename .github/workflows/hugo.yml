@@ -43,6 +43,9 @@ jobs:
     runs-on: ${{ matrix.leg }}
     environment: icr-bench
     timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: hugo
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +57,7 @@ jobs:
           repository: gohugoio/hugo
           ref: 51cd9e6c7e9b33dc3836e28ac30a3b9260dd1b4e
           persist-credentials: false
+          path: hugo   # codegen's TestMethods panics unless the module root is a directory named hugo, as on upstream's runners
       - name: Runner facts
         env:
           LEG: ${{ matrix.leg }}
@@ -124,10 +128,8 @@ jobs:
         if: inputs.mode == 'bounded'
         run: |
           mkdir -p "$RUNNER_TEMP/evidence"
-          # every package but codegen: its TestMethods panics ("dir must be set to the Hugo root") when run outside mage, on
-          # GitHub and ICR alike; it tests the code generator, not the build
-          # -p 2 is what upstream's CI loop uses; the default (one build per CPU) ran 76 package builds out of memory on the 16 GiB legs
-          go test -json -p 2 -tags extended,withdeploy $(go list ./... | grep -v "/codegen$") > "$RUNNER_TEMP/evidence/go-test.json"
+                    # -p 2 is what upstream's CI loop uses; the default (one build per CPU) ran 76 package builds out of memory on the 16 GiB legs
+          go test -json -p 2 -tags extended,withdeploy ./... > "$RUNNER_TEMP/evidence/go-test.json"
       - name: Evidence
         if: always()
         run: |
