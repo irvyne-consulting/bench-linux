@@ -105,6 +105,9 @@ On these, four ICR vCPUs finish in a little over a third of GitHub's four (Clang
 8 vCPU runner in a fifth (Clang 5.0×, kernel 5.4×): a kernel that takes GitHub's runner the whole morning is done on
 `icr-8c` in half an hour. Hugo's full upstream check (`mage -v check`) failed on every leg and is being looked at.
 
+Campaigns with more attempts per project are paused since 2026-09-20 10:35 UTC at the operator's request; the tables above
+are the record until they resume.
+
 ### First pilots — one attempt per leg, 2026-09-19/20 (execution, seconds)
 
 | project | `ubuntu-latest` | `ubuntu-26.04` | `icr-2c` | `icr-4c` | `icr-8c` | run |
